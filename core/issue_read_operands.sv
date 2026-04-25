@@ -1060,7 +1060,12 @@ module issue_read_operands
     end
   end
 
+  logic is_zcmt_n;
+
   assign alu_bypass_n = &issue_ack_o ? alu_bypass : '0;
+  assign is_zcmt_n = (issue_instr_i[0].fu == CTRL_FLOW) ?
+                     (CVA6Cfg.RVZCMT ? issue_instr_i[0].is_zcmt : 1'b0) :
+                     is_zcmt_o;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -1074,22 +1079,18 @@ module issue_read_operands
       branch_predict_o         <= {cf_t'(0), {CVA6Cfg.VLEN{1'b0}}};
       x_transaction_rejected_o <= 1'b0;
       alu_bypass_q             <= '0;
+      orig_instr_aes_bits      <= '0;
     end else begin
       fu_data_q <= fu_data_n;
       alu_bypass_q <= alu_bypass_n;
-      if (CVA6Cfg.ZKN) begin
-        orig_instr_aes_bits <= {orig_instr_i[0][31:30], orig_instr_i[0][23:20]};
-      end
+      orig_instr_aes_bits <= CVA6Cfg.ZKN ? {orig_instr_i[0][31:30], orig_instr_i[0][23:20]} : '0;
       if (CVA6Cfg.RVH) begin
         tinst_q <= tinst_n;
       end
       pc_o <= pc_n;
       is_compressed_instr_o <= is_compressed_instr_n;
       branch_predict_o <= branch_predict_n;
-      if (issue_instr_i[0].fu == CTRL_FLOW) begin
-        if (CVA6Cfg.RVZCMT) is_zcmt_o <= issue_instr_i[0].is_zcmt;
-        else is_zcmt_o <= '0;
-      end
+      is_zcmt_o <= is_zcmt_n;
       x_transaction_rejected_o <= x_transaction_rejected_n;
     end
   end

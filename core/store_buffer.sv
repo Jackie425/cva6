@@ -79,6 +79,8 @@ module store_buffer
   // Commit Queue
   logic [$clog2(DEPTH_COMMIT)-1:0] commit_read_pointer_n, commit_read_pointer_q;
   logic [$clog2(DEPTH_COMMIT)-1:0] commit_write_pointer_n, commit_write_pointer_q;
+  logic req_port_data_req;
+  cbo_t req_port_cbo_op;
 
   assign store_buffer_empty_o = (speculative_status_cnt_q == 0) & no_st_pending_o;
   // ----------------------------------------
@@ -155,6 +157,8 @@ module store_buffer
   assign req_port_o.data_wuser = '0;
   assign req_port_o.data_be = commit_queue_q[commit_read_pointer_q].be;
   assign req_port_o.data_size = commit_queue_q[commit_read_pointer_q].data_size;
+  assign req_port_o.data_req = req_port_data_req;
+  assign req_port_o.cbo_op = req_port_cbo_op;
 
   assign rvfi_mem_paddr_o = speculative_queue_q[speculative_read_pointer_q].address;
 
@@ -171,13 +175,13 @@ module store_buffer
 
     commit_queue_n         = commit_queue_q;
 
-    req_port_o.data_req    = 1'b0;
-    req_port_o.cbo_op      = commit_queue_q[commit_read_pointer_q].cbo_op;
+    req_port_data_req      = 1'b0;
+    req_port_cbo_op        = commit_queue_q[commit_read_pointer_q].cbo_op;
 
     // there should be no commit when we are flushing
     // if the entry in the commit queue is valid and not speculative anymore we can issue this instruction
     if (commit_queue_q[commit_read_pointer_q].valid && !stall_st_pending_i && !commit_queue_q[commit_read_pointer_q].wait_rvalid) begin
-      req_port_o.data_req = 1'b1;
+      req_port_data_req = 1'b1;
       if (req_port_i.data_gnt) begin
         if (commit_queue_q[commit_read_pointer_q].cbo_op == ariane_pkg::CBO_NONE || req_port_i.data_rvalid) begin
           // not CBO or rvalid as well -> we can evict it from the commit buffer
@@ -242,7 +246,6 @@ module store_buffer
       // Check if the page offset matches and whether the entry is valid, for the commit queue
       if ((page_offset_i[11:3] == commit_queue_q[i].address[11:3]) && commit_queue_q[i].valid) begin
         page_offset_matches_o = 1'b1;
-        break;
       end
     end
 
@@ -250,7 +253,6 @@ module store_buffer
       // do the same for the speculative queue
       if ((page_offset_i[11:3] == speculative_queue_q[i].address[11:3]) && speculative_queue_q[i].valid) begin
         page_offset_matches_o = 1'b1;
-        break;
       end
     end
     // or it matches with the entry we are currently putting into the queue
@@ -315,6 +317,4 @@ module store_buffer
   else $error("[Commit Queue] You are trying to commit a store although the buffer is full");
   //pragma translate_on
 endmodule
-
-
 

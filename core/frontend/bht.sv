@@ -51,12 +51,14 @@ module bht #(
   // number of bits we should use for prediction
   localparam PREDICTION_BITS = $clog2(NR_ROWS) + OFFSET + ROW_ADDR_BITS;
 
-  struct packed {
+  typedef struct packed {
     logic       valid;
     logic [1:0] saturation_counter;
-  }
-      bht_d[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0],
-      bht_q[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0];
+  } bht_entry_t;
+  typedef bht_entry_t bht_row_t[CVA6Cfg.INSTR_PER_FETCH];
+  typedef bht_row_t bht_mem_t[NR_ROWS];
+
+  bht_mem_t bht_d, bht_q;
 
   logic [$clog2(NR_ROWS)-1:0] index, update_pc;
   logic [ROW_INDEX_BITS-1:0] update_row_index, update_row_index_q, check_update_row_index;
@@ -104,20 +106,15 @@ module bht #(
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) begin
-        for (int unsigned i = 0; i < NR_ROWS; i++) begin
-          for (int j = 0; j < CVA6Cfg.INSTR_PER_FETCH; j++) begin
-            bht_q[i][j] <= '0;
-          end
-        end
+        bht_q <= '{default: '0};
       end else begin
         // evict all entries
         if (flush_bp_i) begin
-          for (int i = 0; i < NR_ROWS; i++) begin
-            for (int j = 0; j < CVA6Cfg.INSTR_PER_FETCH; j++) begin
-              bht_q[i][j].valid <= 1'b0;
-              bht_q[i][j].saturation_counter <= 2'b10;
-            end
-          end
+          bht_q <= bht_mem_t'{
+              default: bht_row_t'{
+                  default: bht_entry_t'{valid: 1'b0, saturation_counter: 2'b10}
+              }
+          };
         end else begin
           bht_q <= bht_d;
         end

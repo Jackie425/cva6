@@ -30,6 +30,12 @@ module pmp
   // if there are no PMPs we can always grant the access.
   if (CVA6Cfg.NrPMPEntries > 0) begin : gen_pmp
     logic [(CVA6Cfg.NrPMPEntries > 0 ? CVA6Cfg.NrPMPEntries-1 : 0):0] match;
+    logic [(CVA6Cfg.NrPMPEntries > 0 ? CVA6Cfg.NrPMPEntries-1 : 0):0] pmp_active;
+    logic [(CVA6Cfg.NrPMPEntries > 0 ? CVA6Cfg.NrPMPEntries-1 : 0):0] pmp_match_taken;
+    logic [(CVA6Cfg.NrPMPEntries > 0 ? CVA6Cfg.NrPMPEntries-1 : 0):0] pmp_access_ok;
+    logic [(CVA6Cfg.NrPMPEntries > 0 ? CVA6Cfg.NrPMPEntries-1 : 0):0] pmp_prior_match;
+    logic [(CVA6Cfg.NrPMPEntries > 0 ? CVA6Cfg.NrPMPEntries-1 : 0):0] pmp_first_match;
+    logic pmp_mmode;
 
     for (genvar i = 0; i < CVA6Cfg.NrPMPEntries; i++) begin
       logic [CVA6Cfg.PLEN-3:0] conf_addr_prev;
@@ -47,29 +53,26 @@ module pmp
       );
     end
 
-    always_comb begin
-      int i;
-
-      allow_o = 1'b0;
-      for (i = 0; i < CVA6Cfg.NrPMPEntries; i++) begin
-        // either we are in S or U mode or the config is locked in which
-        // case it also applies in M mode
-        if (priv_lvl_i != riscv::PRIV_LVL_M || conf_i[i].locked) begin
-          if (match[i]) begin
-            if ((access_type_i & conf_i[i].access_type) != access_type_i) allow_o = 1'b0;
-            else allow_o = 1'b1;
-            break;
-          end
-        end
+    for (genvar i = 0; i < CVA6Cfg.NrPMPEntries; i++) begin : gen_pmp_allow
+      // Either we are in S/U mode, or the config is locked and also applies in M mode.
+      assign pmp_active[i] = (((priv_lvl_i != riscv::PRIV_LVL_M) ||
+                               conf_i[i].locked) === 1'b1);
+      assign pmp_match_taken[i] = pmp_active[i] & (match[i] === 1'b1);
+      assign pmp_access_ok[i] =
+          (((access_type_i & conf_i[i].access_type) != access_type_i) === 1'b1)
+              ? 1'b0
+              : 1'b1;
+      if (i == 0) begin : gen_first_entry
+        assign pmp_prior_match[i] = 1'b0;
+      end else begin : gen_later_entry
+        assign pmp_prior_match[i] = |pmp_match_taken[i-1:0];
       end
-      if (i == CVA6Cfg.NrPMPEntries) begin  // no PMP entry matched the address
-        // allow all accesses from M-mode for no pmp match
-        if (priv_lvl_i == riscv::PRIV_LVL_M) allow_o = 1'b1;
-        // disallow accesses for all other modes
-        else
-          allow_o = 1'b0;
-      end
+      assign pmp_first_match[i] = pmp_match_taken[i] & ~pmp_prior_match[i];
     end
+
+    assign pmp_mmode = (priv_lvl_i == riscv::PRIV_LVL_M) === 1'b1;
+    assign allow_o = (|pmp_first_match) ? |(pmp_first_match & pmp_access_ok) :
+                                          pmp_mmode;
   end else assign allow_o = 1'b1;
 
 endmodule

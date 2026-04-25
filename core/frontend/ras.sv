@@ -36,36 +36,37 @@ module ras #(
 );
 
   ras_t [DEPTH-1:0] stack_d, stack_q;
+  ras_t             push_entry;
 
   assign data_o = stack_q[0];
+  assign push_entry.ra = data_i;
+  assign push_entry.valid = 1'b1;
 
-  always_comb begin
-    stack_d = stack_q;
-
-    // push on the stack
-    if (push_i) begin
-      stack_d[0].ra = data_i;
-      // mark the new return address as valid
-      stack_d[0].valid = 1'b1;
-      stack_d[DEPTH-1:1] = stack_q[DEPTH-2:0];
-    end
-
-    if (pop_i) begin
-      stack_d[DEPTH-2:0] = stack_q[DEPTH-1:1];
-      // we popped the value so invalidate the end of the stack
-      stack_d[DEPTH-1].valid = 1'b0;
-      stack_d[DEPTH-1].ra = 'b0;
-    end
-    // leave everything untouched and just push the latest value to the
-    // top of the stack
-    if (pop_i && push_i) begin
-      stack_d = stack_q;
-      stack_d[0].ra = data_i;
-      stack_d[0].valid = 1'b1;
-    end
-
-    if (flush_bp_i) begin
-      stack_d = '0;
+  if (DEPTH == 1) begin : gen_single_entry_stack
+    assign stack_d[0] = flush_bp_i ? '0 :
+                        push_i     ? push_entry :
+                        pop_i      ? '0 :
+                                     stack_q[0];
+  end else begin : gen_multi_entry_stack
+    for (genvar i = 0; i < DEPTH; i++) begin : gen_stack_d
+      if (i == 0) begin : gen_top
+        assign stack_d[i] = flush_bp_i ? '0 :
+                            push_i     ? push_entry :
+                            pop_i      ? stack_q[i+1] :
+                                         stack_q[i];
+      end else if (i == DEPTH - 1) begin : gen_bottom
+        assign stack_d[i] = flush_bp_i       ? '0 :
+                            (push_i & pop_i) ? stack_q[i] :
+                            push_i           ? stack_q[i-1] :
+                            pop_i            ? '0 :
+                                               stack_q[i];
+      end else begin : gen_middle
+        assign stack_d[i] = flush_bp_i       ? '0 :
+                            (push_i & pop_i) ? stack_q[i] :
+                            push_i           ? stack_q[i-1] :
+                            pop_i            ? stack_q[i+1] :
+                                               stack_q[i];
+      end
     end
   end
 

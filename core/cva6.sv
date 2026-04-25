@@ -782,25 +782,46 @@ module cva6
   exception_t [CVA6Cfg.NrWbPorts-1:0] ex_ex_ex_id;  // exception from execute, ex_stage to id_stage
   logic [CVA6Cfg.NrWbPorts-1:0] wt_valid_ex_id;
 
-  assign trans_id_ex_id[FLU_WB] = flu_trans_id_ex_id;
-  assign wbdata_ex_id[FLU_WB]   = flu_result_ex_id;
-  assign ex_ex_ex_id[FLU_WB]    = flu_exception_ex_id;
-  assign wt_valid_ex_id[FLU_WB] = flu_valid_ex_id;
-
-  assign trans_id_ex_id[STORE_WB] = store_trans_id_ex_id;
-  assign wbdata_ex_id[STORE_WB]   = store_result_ex_id;
-  assign ex_ex_ex_id[STORE_WB]    = store_exception_ex_id;
-  assign wt_valid_ex_id[STORE_WB] = store_valid_ex_id;
-
-  assign trans_id_ex_id[LOAD_WB] = load_trans_id_ex_id;
-  assign wbdata_ex_id[LOAD_WB]   = load_result_ex_id;
-  assign ex_ex_ex_id[LOAD_WB]    = load_exception_ex_id;
-  assign wt_valid_ex_id[LOAD_WB] = load_valid_ex_id;
-
-  assign trans_id_ex_id[FPU_WB] = fpu_trans_id_ex_id;
-  assign wbdata_ex_id[FPU_WB]   = fpu_result_ex_id;
-  assign ex_ex_ex_id[FPU_WB]    = fpu_exception_ex_id;
-  assign wt_valid_ex_id[FPU_WB] = fpu_valid_ex_id;
+  if (CVA6Cfg.CvxifEn) begin : gen_wb_ports_xif
+    assign trans_id_ex_id = {
+      x_trans_id_ex_id, fpu_trans_id_ex_id, load_trans_id_ex_id, store_trans_id_ex_id, flu_trans_id_ex_id
+    };
+    assign wbdata_ex_id = {
+      x_result_ex_id, fpu_result_ex_id, load_result_ex_id, store_result_ex_id, flu_result_ex_id
+    };
+    assign ex_ex_ex_id = {
+      x_exception_ex_id, fpu_exception_ex_id, load_exception_ex_id, store_exception_ex_id, flu_exception_ex_id
+    };
+    assign wt_valid_ex_id = {
+      x_valid_ex_id, fpu_valid_ex_id, load_valid_ex_id, store_valid_ex_id, flu_valid_ex_id
+    };
+  end else if (CVA6Cfg.EnableAccelerator) begin : gen_wb_ports_acc
+    assign trans_id_ex_id = {
+      acc_trans_id_ex_id, fpu_trans_id_ex_id, load_trans_id_ex_id, store_trans_id_ex_id, flu_trans_id_ex_id
+    };
+    assign wbdata_ex_id = {
+      acc_result_ex_id, fpu_result_ex_id, load_result_ex_id, store_result_ex_id, flu_result_ex_id
+    };
+    assign ex_ex_ex_id = {
+      acc_exception_ex_id, fpu_exception_ex_id, load_exception_ex_id, store_exception_ex_id, flu_exception_ex_id
+    };
+    assign wt_valid_ex_id = {
+      acc_valid_ex_id, fpu_valid_ex_id, load_valid_ex_id, store_valid_ex_id, flu_valid_ex_id
+    };
+  end else begin : gen_wb_ports_base
+    assign trans_id_ex_id = {
+      fpu_trans_id_ex_id, load_trans_id_ex_id, store_trans_id_ex_id, flu_trans_id_ex_id
+    };
+    assign wbdata_ex_id = {
+      fpu_result_ex_id, load_result_ex_id, store_result_ex_id, flu_result_ex_id
+    };
+    assign ex_ex_ex_id = {
+      fpu_exception_ex_id, load_exception_ex_id, store_exception_ex_id, flu_exception_ex_id
+    };
+    assign wt_valid_ex_id = {
+      fpu_valid_ex_id, load_valid_ex_id, store_valid_ex_id, flu_valid_ex_id
+    };
+  end
 
   if (CVA6Cfg.CvxifEn) begin
     always_comb begin : gen_cvxif_input_assignment
@@ -824,16 +845,8 @@ module cva6
       cvxif_req.commit           = x_commit;
       cvxif_req.result_ready     = x_result_ready;
     end
-    assign trans_id_ex_id[X_WB] = x_trans_id_ex_id;
-    assign wbdata_ex_id[X_WB]   = x_result_ex_id;
-    assign ex_ex_ex_id[X_WB]    = x_exception_ex_id;
-    assign wt_valid_ex_id[X_WB] = x_valid_ex_id;
   end else if (CVA6Cfg.EnableAccelerator) begin
     assign cvxif_req = '0;
-    assign trans_id_ex_id[ACC_WB] = acc_trans_id_ex_id;
-    assign wbdata_ex_id[ACC_WB]   = acc_result_ex_id;
-    assign ex_ex_ex_id[ACC_WB]    = acc_exception_ex_id;
-    assign wt_valid_ex_id[ACC_WB] = acc_valid_ex_id;
   end else begin
     assign cvxif_req = '0;
     assign x_compressed_ready = '0;
@@ -1358,6 +1371,20 @@ module cva6
   // Store buffer always has priority access over acc dispatcher.
   dcache_req_i_t [NumPorts-1:0] dcache_req_to_cache;
   dcache_req_o_t [NumPorts-1:0] dcache_req_from_cache;
+  dcache_req_o_t dcache_req_rsp_zero;
+  dcache_req_o_t dcache_req_rsp_store_ex;
+  dcache_req_o_t dcache_req_rsp_store_acc;
+
+  assign dcache_req_rsp_zero = '0;
+
+  always_comb begin : gen_dcache_req_store_rsp
+    dcache_req_rsp_store_ex  = dcache_req_from_cache[3];
+    dcache_req_rsp_store_acc = dcache_req_from_cache[3];
+
+    // Store buffer and accelerator share the last cache response port.
+    dcache_req_rsp_store_ex.data_gnt  &= dcache_req_ports_ex_cache[2].data_req;
+    dcache_req_rsp_store_acc.data_gnt &= !dcache_req_ports_ex_cache[2].data_req;
+  end
 
   // D$ request
   // Since ZCMT is only enabled for embedded class so MMU should be disabled.
@@ -1377,21 +1404,16 @@ module cva6
   // Cache port 0 is being utilized in implicit read access in ZCMT extension.
   if (CVA6Cfg.RVZCMT & ~(CVA6Cfg.MmuPresent)) begin
     assign dcache_req_ports_cache_id = dcache_req_from_cache[0];
-    assign dcache_req_ports_cache_ex[0] = '0;
+    assign dcache_req_ports_cache_ex = {
+      dcache_req_rsp_store_ex, dcache_req_from_cache[1], dcache_req_rsp_zero
+    };
   end else begin
-    assign dcache_req_ports_cache_ex[0] = dcache_req_from_cache[0];
+    assign dcache_req_ports_cache_ex = {
+      dcache_req_rsp_store_ex, dcache_req_from_cache[1], dcache_req_from_cache[0]
+    };
     assign dcache_req_ports_cache_id = '0;
   end
-  assign dcache_req_ports_cache_ex[1]  = dcache_req_from_cache[1];
-  assign dcache_req_ports_cache_acc[0] = dcache_req_from_cache[2];
-  always_comb begin : gen_dcache_req_store_data_gnt
-    dcache_req_ports_cache_ex[2]  = dcache_req_from_cache[3];
-    dcache_req_ports_cache_acc[1] = dcache_req_from_cache[3];
-
-    // Set gnt signal
-    dcache_req_ports_cache_ex[2].data_gnt &= dcache_req_ports_ex_cache[2].data_req;
-    dcache_req_ports_cache_acc[1].data_gnt &= !dcache_req_ports_ex_cache[2].data_req;
-  end
+  assign dcache_req_ports_cache_acc = {dcache_req_rsp_store_acc, dcache_req_from_cache[2]};
 
   if (CVA6Cfg.DCacheType == config_pkg::WT) begin : gen_cache_wt
     // this is a cache subsystem that is compatible with OpenPiton

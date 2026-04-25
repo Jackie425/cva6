@@ -81,78 +81,106 @@ module perf_counters
   logic [CVA6Cfg.NrCommitPorts-1:0] int_event;
   logic [CVA6Cfg.NrCommitPorts-1:0] fp_event;
 
-  //Multiplexer
-  always_comb begin : Mux
-    events[MHPMCounterNum:1] = '{default: 0};
-    load_event = '{default: 0};
-    store_event = '{default: 0};
-    branch_event = '{default: 0};
-    call_event = '{default: 0};
-    return_event = '{default: 0};
-    int_event = '{default: 0};
-    fp_event = '{default: 0};
-
-    for (int unsigned j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin
-      load_event[j] = commit_ack_i[j] & (commit_instr_i[j].fu == LOAD);
-      store_event[j] = commit_ack_i[j] & (commit_instr_i[j].fu == STORE);
-      branch_event[j] = commit_ack_i[j] & (commit_instr_i[j].fu == CTRL_FLOW);
-      call_event[j] = commit_ack_i[j] & (commit_instr_i[j].fu == CTRL_FLOW && (commit_instr_i[j].op == ADD || commit_instr_i[j].op == JALR) && (commit_instr_i[j].rd == 'd1 || commit_instr_i[j].rd == 'd5));
-      return_event[j] = commit_ack_i[j] & (commit_instr_i[j].op == JALR && commit_instr_i[j].rd == 'd0);
-      int_event[j] = commit_ack_i[j] & (commit_instr_i[j].fu == ALU || commit_instr_i[j].fu == MULT);
-      fp_event[j] = commit_ack_i[j] & (commit_instr_i[j].fu == FPU || commit_instr_i[j].fu == FPU_VEC);
-    end
-
-    for (int unsigned i = 1; i <= MHPMCounterNum; i++) begin
-      case (mhpmevent_q[i])
-        5'b00000: events[i] = 0;
-        5'b00001: events[i] = l1_icache_miss_i;  //L1 I-Cache misses
-        5'b00010: events[i] = l1_dcache_miss_i;  //L1 D-Cache misses
-        5'b00011: events[i] = itlb_miss_i;  //ITLB misses
-        5'b00100: events[i] = dtlb_miss_i;  //DTLB misses
-        5'b00101: events[i] = |load_event;  //Load accesses
-        5'b00110: events[i] = |store_event;  //Store accesses
-        5'b00111: events[i] = ex_i.valid;  //Exceptions
-        5'b01000: events[i] = eret_i;  //Exception handler returns
-        5'b01001: events[i] = |branch_event;  // Branch instructions
-        5'b01010:
-        events[i] = resolved_branch_i.valid && resolved_branch_i.is_mispredict;//Branch mispredicts
-        5'b01011: events[i] = branch_exceptions_i.valid;  //Branch exceptions
-        // The standard software calling convention uses register x1 to hold the return address on a call
-        // the unconditional jump is decoded as ADD op
-        5'b01100: events[i] = |call_event;  //Call
-        5'b01101: events[i] = |return_event;  //Return
-        5'b01110: events[i] = sb_full_i;  //MSB Full
-        5'b01111: events[i] = if_empty_i;  //Instruction fetch Empty
-        5'b10000: events[i] = l1_icache_access_i.req;  //L1 I-Cache accesses
-        5'b10001:
-        events[i] = l1_dcache_access_i[0].data_req || l1_dcache_access_i[1].data_req || l1_dcache_access_i[2].data_req;//L1 D-Cache accesses
-        5'b10010:
-        events[i] = (l1_dcache_miss_i && miss_vld_bits_i[0] == 8'hFF) || (l1_dcache_miss_i && miss_vld_bits_i[1] == 8'hFF) || (l1_dcache_miss_i && miss_vld_bits_i[2] == 8'hFF);//eviction
-        5'b10011: events[i] = i_tlb_flush_i;  //I-TLB flush
-        5'b10100: events[i] = |int_event;  //Integer instructions
-        5'b10101: events[i] = |fp_event;  //Floating Point Instructions
-        5'b10110: events[i] = stall_issue_i;  //Pipeline bubbles
-        default: events[i] = 0;
-      endcase
-    end
-
+  for (genvar gen_commit_port = 0; gen_commit_port < CVA6Cfg.NrCommitPorts; gen_commit_port++) begin : gen_commit_events
+    assign load_event[gen_commit_port] = commit_ack_i[gen_commit_port] &
+                                         (commit_instr_i[gen_commit_port].fu == LOAD);
+    assign store_event[gen_commit_port] = commit_ack_i[gen_commit_port] &
+                                          (commit_instr_i[gen_commit_port].fu == STORE);
+    assign branch_event[gen_commit_port] = commit_ack_i[gen_commit_port] &
+                                           (commit_instr_i[gen_commit_port].fu == CTRL_FLOW);
+    assign call_event[gen_commit_port] = commit_ack_i[gen_commit_port] &
+                                         (commit_instr_i[gen_commit_port].fu == CTRL_FLOW) &
+                                         ((commit_instr_i[gen_commit_port].op == ADD) ||
+                                          (commit_instr_i[gen_commit_port].op == JALR)) &
+                                         ((commit_instr_i[gen_commit_port].rd == 'd1) ||
+                                          (commit_instr_i[gen_commit_port].rd == 'd5));
+    assign return_event[gen_commit_port] = commit_ack_i[gen_commit_port] &
+                                           (commit_instr_i[gen_commit_port].op == JALR) &
+                                           (commit_instr_i[gen_commit_port].rd == 'd0);
+    assign int_event[gen_commit_port] = commit_ack_i[gen_commit_port] &
+                                        ((commit_instr_i[gen_commit_port].fu == ALU) ||
+                                         (commit_instr_i[gen_commit_port].fu == MULT));
+    assign fp_event[gen_commit_port] = commit_ack_i[gen_commit_port] &
+                                       ((commit_instr_i[gen_commit_port].fu == FPU) ||
+                                        (commit_instr_i[gen_commit_port].fu == FPU_VEC));
   end
 
-  always_comb begin : generic_counter
-    generic_counter_d = generic_counter_q;
-    data_o = 'b0;
-    mhpmevent_d = mhpmevent_q;
-    read_access_exception = 1'b0;
-    update_access_exception = 1'b0;
+  for (genvar gen_counter_event = 1; gen_counter_event <= MHPMCounterNum; gen_counter_event++) begin : gen_event_mux
+    always_comb begin
+      unique case (mhpmevent_q[gen_counter_event])
+        5'b00000: events[gen_counter_event] = 0;
+        5'b00001: events[gen_counter_event] = l1_icache_miss_i;  // L1 I-Cache misses
+        5'b00010: events[gen_counter_event] = l1_dcache_miss_i;  // L1 D-Cache misses
+        5'b00011: events[gen_counter_event] = itlb_miss_i;  // ITLB misses
+        5'b00100: events[gen_counter_event] = dtlb_miss_i;  // DTLB misses
+        5'b00101: events[gen_counter_event] = |load_event;  // Load accesses
+        5'b00110: events[gen_counter_event] = |store_event;  // Store accesses
+        5'b00111: events[gen_counter_event] = ex_i.valid;  // Exceptions
+        5'b01000: events[gen_counter_event] = eret_i;  // Exception handler returns
+        5'b01001: events[gen_counter_event] = |branch_event;  // Branch instructions
+        5'b01010: events[gen_counter_event] =
+            resolved_branch_i.valid && resolved_branch_i.is_mispredict;
+        5'b01011: events[gen_counter_event] = branch_exceptions_i.valid;
+        5'b01100: events[gen_counter_event] = |call_event;  // Call
+        5'b01101: events[gen_counter_event] = |return_event;  // Return
+        5'b01110: events[gen_counter_event] = sb_full_i;  // MSB Full
+        5'b01111: events[gen_counter_event] = if_empty_i;  // Instruction fetch Empty
+        5'b10000: events[gen_counter_event] = l1_icache_access_i.req;
+        5'b10001: events[gen_counter_event] = l1_dcache_access_i[0].data_req ||
+            l1_dcache_access_i[1].data_req || l1_dcache_access_i[2].data_req;
+        5'b10010: events[gen_counter_event] =
+            (l1_dcache_miss_i && miss_vld_bits_i[0] == 8'hFF) ||
+            (l1_dcache_miss_i && miss_vld_bits_i[1] == 8'hFF) ||
+            (l1_dcache_miss_i && miss_vld_bits_i[2] == 8'hFF);
+        5'b10011: events[gen_counter_event] = i_tlb_flush_i;
+        5'b10100: events[gen_counter_event] = |int_event;
+        5'b10101: events[gen_counter_event] = |fp_event;
+        5'b10110: events[gen_counter_event] = stall_issue_i;
+        default:  events[gen_counter_event] = 0;
+      endcase
+    end
+  end
 
-    // Increment the non-inhibited counters with active events
-    for (int unsigned i = 1; i <= MHPMCounterNum; i++) begin
-      if ((!debug_mode_i) && (!we_i)) begin
-        if ((events[i]) == 1 && (!mcountinhibit_i[i+2])) begin
-          generic_counter_d[i] = generic_counter_q[i] + 1'b1;
+  for (genvar gen_counter_update = 1; gen_counter_update <= MHPMCounterNum; gen_counter_update++) begin : gen_counter_update_logic
+    localparam int unsigned CounterOffset = gen_counter_update - 1;
+    localparam csr_addr_t MhpmCounterAddr =
+        csr_addr_t'(riscv::CSR_MHPM_COUNTER_3) + csr_addr_t'(CounterOffset);
+    localparam csr_addr_t MhpmCounterHighAddr =
+        csr_addr_t'(riscv::CSR_MHPM_COUNTER_3H) + csr_addr_t'(CounterOffset);
+    localparam csr_addr_t MhpmEventAddr =
+        csr_addr_t'(riscv::CSR_MHPM_EVENT_3) + csr_addr_t'(CounterOffset);
+
+    always_comb begin
+      generic_counter_d[gen_counter_update] = generic_counter_q[gen_counter_update];
+      mhpmevent_d[gen_counter_update] = mhpmevent_q[gen_counter_update];
+
+      if ((!debug_mode_i) && (!we_i) && events[gen_counter_update] &&
+          (!mcountinhibit_i[gen_counter_update+2])) begin
+        generic_counter_d[gen_counter_update] = generic_counter_q[gen_counter_update] + 1'b1;
+      end
+
+      if (we_i) begin
+        if (addr_i == MhpmCounterAddr) begin
+          if (riscv::XLEN == 32) begin
+            generic_counter_d[gen_counter_update][31:0] = data_i;
+          end else begin
+            generic_counter_d[gen_counter_update] = data_i;
+          end
+        end else if (addr_i == MhpmCounterHighAddr) begin
+          if (riscv::XLEN == 32) begin
+            generic_counter_d[gen_counter_update][63:32] = data_i;
+          end
+        end else if (addr_i == MhpmEventAddr) begin
+          mhpmevent_d[gen_counter_update] = data_i;
         end
       end
     end
+  end
+
+  always_comb begin : generic_counter_read
+    data_o = 'b0;
+    read_access_exception = 1'b0;
+    update_access_exception = 1'b0;
 
     //Read
     if( (addr_i >= csr_addr_t'(riscv::CSR_MHPM_COUNTER_3)) && (addr_i < ( csr_addr_t'(riscv::CSR_MHPM_COUNTER_3) + MHPMCounterNum)) ) begin
@@ -183,22 +211,14 @@ module perf_counters
       end
     end
 
-    //Write
+    //Write access exceptions
     if (we_i) begin
       if( (addr_i >= csr_addr_t'(riscv::CSR_MHPM_COUNTER_3)) && (addr_i < (csr_addr_t'(riscv::CSR_MHPM_COUNTER_3) + MHPMCounterNum)) ) begin
-        if (riscv::XLEN == 32) begin
-          generic_counter_d[addr_i-riscv::CSR_MHPM_COUNTER_3+1][31:0] = data_i;
-        end else begin
-          generic_counter_d[addr_i-riscv::CSR_MHPM_COUNTER_3+1] = data_i;
-        end
+        update_access_exception = 1'b0;
       end else if( (addr_i >= csr_addr_t'(riscv::CSR_MHPM_COUNTER_3H)) && (addr_i < (csr_addr_t'(riscv::CSR_MHPM_COUNTER_3H) + MHPMCounterNum)) ) begin
-        if (riscv::XLEN == 32) begin
-          generic_counter_d[addr_i-riscv::CSR_MHPM_COUNTER_3H+1][63:32] = data_i;
-        end else begin
-          update_access_exception = 1'b1;
-        end
+        if (riscv::XLEN != 32) update_access_exception = 1'b1;
       end else if( (addr_i >= csr_addr_t'(riscv::CSR_MHPM_EVENT_3)) && (addr_i < csr_addr_t'(riscv::CSR_MHPM_EVENT_3) + MHPMCounterNum) ) begin
-        mhpmevent_d[addr_i-riscv::CSR_MHPM_EVENT_3+1] = data_i;
+        update_access_exception = 1'b0;
       end
     end
   end

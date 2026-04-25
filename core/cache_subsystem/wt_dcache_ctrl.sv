@@ -77,6 +77,8 @@ module wt_dcache_ctrl
   logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] vld_data_d, vld_data_q;
   logic save_tag, rd_req_d, rd_req_q, rd_ack_d, rd_ack_q;
   logic [1:0] data_size_d, data_size_q;
+  logic req_port_data_gnt;
+  logic req_port_data_rvalid;
 
   ///////////////////////////////////////////////////////
   // misc
@@ -85,14 +87,16 @@ module wt_dcache_ctrl
   // map address to tag/idx/offset and save
   assign vld_data_d = (rd_req_q) ? rd_vld_bits_i : vld_data_q;
   assign address_tag_d = (save_tag) ? req_port_i.address_tag : address_tag_q;
-  assign address_idx_d = (req_port_o.data_gnt) ? req_port_i.address_index[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH] : address_idx_q;
-  assign address_off_d = (req_port_o.data_gnt) ? req_port_i.address_index[CVA6Cfg.DCACHE_OFFSET_WIDTH-1:0]                  : address_off_q;
-  assign id_d = (req_port_o.data_gnt) ? req_port_i.data_id : id_q;
-  assign data_size_d = (req_port_o.data_gnt) ? req_port_i.data_size : data_size_q;
+  assign address_idx_d = (req_port_data_gnt) ? req_port_i.address_index[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH] : address_idx_q;
+  assign address_off_d = (req_port_data_gnt) ? req_port_i.address_index[CVA6Cfg.DCACHE_OFFSET_WIDTH-1:0]                  : address_off_q;
+  assign id_d = (req_port_data_gnt) ? req_port_i.data_id : id_q;
+  assign data_size_d = (req_port_data_gnt) ? req_port_i.data_size : data_size_q;
   assign rd_tag_o = address_tag_d;
   assign rd_idx_o = address_idx_d;
   assign rd_off_o = address_off_d;
 
+  assign req_port_o.data_gnt = req_port_data_gnt;
+  assign req_port_o.data_rvalid = req_port_data_rvalid;
   assign req_port_o.data_rdata = rd_data_i;
   assign req_port_o.data_ruser = rd_user_i;
   assign req_port_o.data_rid = id_q;
@@ -127,8 +131,8 @@ module wt_dcache_ctrl
     save_tag               = 1'b0;
     rd_req_o               = 1'b0;
     miss_req_o             = 1'b0;
-    req_port_o.data_rvalid = 1'b0;
-    req_port_o.data_gnt    = 1'b0;
+    req_port_data_rvalid   = 1'b0;
+    req_port_data_gnt      = 1'b0;
 
     // interfaces
     unique case (state_q)
@@ -140,7 +144,7 @@ module wt_dcache_ctrl
           // if read ack then ack the `req_port_o`, and goto `READ` state
           if (rd_ack_i) begin
             state_d = READ;
-            req_port_o.data_gnt = 1'b1;
+            req_port_data_gnt = 1'b1;
           end
         end
       end
@@ -157,7 +161,7 @@ module wt_dcache_ctrl
         // kill -> go back to IDLE
         if (req_port_i.kill_req) begin
           state_d = IDLE;
-          req_port_o.data_rvalid = 1'b1;
+          req_port_data_rvalid = 1'b1;
         end else if (req_port_i.tag_valid | state_q == REPLAY_READ) begin
           save_tag = (state_q != REPLAY_READ);
           if (wr_cl_vld_i || !rd_ack_q) begin
@@ -165,11 +169,11 @@ module wt_dcache_ctrl
             // we've got a hit
           end else if ((|rd_hit_oh_i) && cache_en_i) begin
             state_d = IDLE;
-            req_port_o.data_rvalid = 1'b1;
+            req_port_data_rvalid = 1'b1;
             // we can handle another request
             if (rd_ack_i && req_port_i.data_req) begin
               state_d = READ;
-              req_port_o.data_gnt = 1'b1;
+              req_port_data_gnt = 1'b1;
             end
             // we've got a miss
           end else begin
@@ -183,7 +187,7 @@ module wt_dcache_ctrl
         miss_req_o = 1'b1;
 
         if (req_port_i.kill_req) begin
-          req_port_o.data_rvalid = 1'b1;
+          req_port_data_rvalid = 1'b1;
           if (miss_ack_i) begin
             state_d = KILL_MISS;
           end else begin
@@ -200,7 +204,7 @@ module wt_dcache_ctrl
       // returns.
       MISS_WAIT: begin
         if (req_port_i.kill_req) begin
-          req_port_o.data_rvalid = 1'b1;
+          req_port_data_rvalid = 1'b1;
           if (miss_rtrn_vld_i) begin
             state_d = IDLE;
           end else begin
@@ -208,7 +212,7 @@ module wt_dcache_ctrl
           end
         end else if (miss_rtrn_vld_i) begin
           state_d = IDLE;
-          req_port_o.data_rvalid = 1'b1;
+          req_port_data_rvalid = 1'b1;
         end
       end
       //////////////////////////////////
@@ -216,7 +220,7 @@ module wt_dcache_ctrl
       REPLAY_REQ: begin
         rd_req_o = 1'b1;
         if (req_port_i.kill_req) begin
-          req_port_o.data_rvalid = 1'b1;
+          req_port_data_rvalid = 1'b1;
           state_d = IDLE;
         end else if (rd_ack_i) begin
           state_d = REPLAY_READ;

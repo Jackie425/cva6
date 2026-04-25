@@ -968,18 +968,31 @@ package riscv;
 
   // This functions converts S-mode CSR addresses into VS-mode CSR addresses
   // when V=1 (i.e., running in VS-mode).
+  function automatic logic is_vs_access_s_csr(logic [11:0] addr);
+    unique case (addr)
+      12'h100, 12'h101, 12'h102, 12'h103, 12'h104, 12'h105,
+      12'h140, 12'h141, 12'h142, 12'h143, 12'h144, 12'h145, 12'h146, 12'h147,
+      12'h148, 12'h149, 12'h14A, 12'h14B, 12'h14C, 12'h14D, 12'h14E, 12'h14F,
+      12'h150, 12'h151, 12'h152, 12'h153, 12'h154, 12'h155, 12'h156, 12'h157,
+      12'h158, 12'h159, 12'h15A, 12'h15B, 12'h15C, 12'h15D, 12'h15E, 12'h15F,
+      12'h160, 12'h161, 12'h162, 12'h163, 12'h164, 12'h165, 12'h166, 12'h167,
+      12'h168, 12'h169, 12'h16A, 12'h16B, 12'h16C, 12'h16D, 12'h16E, 12'h16F,
+      12'h170, 12'h171, 12'h172, 12'h173, 12'h174, 12'h175, 12'h176, 12'h177,
+      12'h178, 12'h179, 12'h17A, 12'h17B, 12'h17C, 12'h17D, 12'h17E, 12'h17F,
+      12'h180: return 1'b1;
+      default: return 1'b0;
+    endcase
+  endfunction
+
   function automatic csr_t convert_vs_access_csr(csr_t csr_addr, logic v);
     csr_t ret;
     ret = csr_addr;
-    unique case (csr_addr.address) inside
-      [CSR_SSTATUS : CSR_STVEC], [CSR_SSCRATCH : CSR_SATP]: begin
-        if (v) begin
-          ret.csr_decode.priv_lvl = PRIV_LVL_HS;
-        end
-        return ret;
+    if (is_vs_access_s_csr(csr_addr.address)) begin
+      if (v) begin
+        ret.csr_decode.priv_lvl = PRIV_LVL_HS;
       end
-      default: return ret;
-    endcase
+    end
+    return ret;
   endfunction
 
 

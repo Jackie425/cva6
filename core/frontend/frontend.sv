@@ -154,6 +154,11 @@ module frontend
   cf_t  [CVA6Cfg.INSTR_PER_FETCH-1:0] cf_type;
   logic [CVA6Cfg.INSTR_PER_FETCH-1:0] taken_rvi_cf;
   logic [CVA6Cfg.INSTR_PER_FETCH-1:0] taken_rvc_cf;
+  logic                               icache_dreq_req;
+  logic                               icache_dreq_kill_s1;
+  logic                               icache_dreq_kill_s2;
+  logic                               icache_dreq_spec;
+  logic [           CVA6Cfg.VLEN-1:0] icache_dreq_vaddr;
 
   logic                               serving_unaligned;
   // Re-align instructions
@@ -162,7 +167,7 @@ module frontend
   ) i_instr_realign (
       .clk_i              (clk_i),
       .rst_ni             (rst_ni),
-      .flush_i            (icache_dreq_o.kill_s2),
+      .flush_i            (icache_dreq_kill_s2),
       .valid_i            (icache_valid_q),
       .serving_unaligned_o(serving_unaligned),
       .address_i          (icache_vaddr_q),
@@ -220,65 +225,64 @@ module frontend
     assign is_jalr[i] = instruction_valid[i] & ~is_return[i] & (rvi_jalr[i] | rvc_jalr[i] | rvc_jr[i]);
   end
 
-  // taken/not taken
-  always_comb begin
-    taken_rvi_cf = '0;
-    taken_rvc_cf = '0;
-    predict_address = '0;
+  if (CVA6Cfg.INSTR_PER_FETCH == 1) begin : gen_single_fetch_cf
+    // Specialize the degenerate single-fetch case; the multi-fetch branch below
+    // keeps the same lower-address priority for wider fetch groups.
+    always_comb begin
+      taken_rvi_cf = '0;
+      taken_rvc_cf = '0;
+      predict_address = '0;
+      cf_type[0] = ariane_pkg::NoCF;
 
-    for (int i = 0; i < CVA6Cfg.INSTR_PER_FETCH; i++) cf_type[i] = ariane_pkg::NoCF;
+      ras_push = 1'b0;
+      ras_pop = 1'b0;
+      ras_update = '0;
 
-    ras_push = 1'b0;
-    ras_pop = 1'b0;
-    ras_update = '0;
-
-    // lower most prediction gets precedence
-    for (int i = CVA6Cfg.INSTR_PER_FETCH - 1; i >= 0; i--) begin
       unique case ({
-        is_branch[i], is_return[i], is_jump[i], is_jalr[i]
+        is_branch[0], is_return[0], is_jump[0], is_jalr[0]
       })
         4'b0000: ;  // regular instruction e.g.: no branch
         // unconditional jump to register, we need the BTB to resolve this
         4'b0001: begin
           ras_pop  = 1'b0;
           ras_push = 1'b0;
-          if (CVA6Cfg.BTBEntries != 0 && btb_prediction_shifted[i].valid) begin
-            predict_address = btb_prediction_shifted[i].target_address;
-            cf_type[i] = ariane_pkg::JumpR;
+          if (CVA6Cfg.BTBEntries != 0 && btb_prediction_shifted[0].valid) begin
+            predict_address = btb_prediction_shifted[0].target_address;
+            cf_type[0] = ariane_pkg::JumpR;
           end
         end
         // its an unconditional jump to an immediate
         4'b0010: begin
           ras_pop = 1'b0;
           ras_push = 1'b0;
-          taken_rvi_cf[i] = rvi_jump[i];
-          taken_rvc_cf[i] = rvc_jump[i];
-          cf_type[i] = ariane_pkg::Jump;
+          taken_rvi_cf[0] = rvi_jump[0];
+          taken_rvc_cf[0] = rvc_jump[0];
+          cf_type[0] = ariane_pkg::Jump;
         end
         // return
         4'b0100: begin
           // make sure to only alter the RAS if we actually consumed the instruction
-          ras_pop = ras_predict.valid & instr_queue_consumed[i];
+          ras_pop = ras_predict.valid & instr_queue_consumed[0];
           ras_push = 1'b0;
           predict_address = ras_predict.ra;
-          cf_type[i] = ariane_pkg::Return;
+          cf_type[0] = ariane_pkg::Return;
         end
         // branch prediction
         4'b1000: begin
           ras_pop  = 1'b0;
           ras_push = 1'b0;
           // if we have a valid dynamic prediction use it
-          if (bht_prediction_shifted[i].valid) begin
-            taken_rvi_cf[i] = rvi_branch[i] & bht_prediction_shifted[i].taken;
-            taken_rvc_cf[i] = rvc_branch[i] & bht_prediction_shifted[i].taken;
+          if (bht_prediction_shifted[0].valid) begin
+            taken_rvi_cf[0] = rvi_branch[0] & bht_prediction_shifted[0].taken;
+            taken_rvc_cf[0] = rvc_branch[0] & bht_prediction_shifted[0].taken;
             // otherwise default to static prediction
           end else begin
             // set if immediate is negative - static prediction
-            taken_rvi_cf[i] = rvi_branch[i] & rvi_imm[i][CVA6Cfg.VLEN-1];
-            taken_rvc_cf[i] = rvc_branch[i] & rvc_imm[i][CVA6Cfg.VLEN-1];
+            taken_rvi_cf[0] = rvi_branch[0] & rvi_imm[0][CVA6Cfg.VLEN-1];
+            taken_rvc_cf[0] = rvc_branch[0] & rvc_imm[0][CVA6Cfg.VLEN-1];
           end
-          if (taken_rvi_cf[i] || taken_rvc_cf[i]) begin
-            cf_type[i] = ariane_pkg::Branch;
+          if (taken_rvi_cf[0] || taken_rvc_cf[0]) begin
+            cf_type[0] = ariane_pkg::Branch;
           end
         end
         default: ;
@@ -286,39 +290,128 @@ module frontend
       endcase
       // if this instruction, in addition, is a call, save the resulting address
       // but only if we actually consumed the address
-      if (is_call[i]) begin
-        ras_push   = instr_queue_consumed[i];
-        ras_update = addr[i] + (rvc_call[i] ? 2 : 4);
+      if (is_call[0]) begin
+        ras_push   = instr_queue_consumed[0];
+        ras_update = addr[0] + (rvc_call[0] ? 2 : 4);
       end
       // calculate the jump target address
-      if (taken_rvc_cf[i] || taken_rvi_cf[i]) begin
-        predict_address = addr[i] + (taken_rvc_cf[i] ? rvc_imm[i] : rvi_imm[i]);
+      if (taken_rvc_cf[0] || taken_rvi_cf[0]) begin
+        predict_address = addr[0] + (taken_rvc_cf[0] ? rvc_imm[0] : rvi_imm[0]);
       end
     end
-  end
-  // or reduce struct
-  always_comb begin
-    bp_valid = 1'b0;
-    // BP cannot be valid if we have a return instruction and the RAS is not giving a valid address
-    // Check that we encountered a control flow and that for a return the RAS
-    // contains a valid prediction.
-    for (int i = 0; i < CVA6Cfg.INSTR_PER_FETCH; i++)
-    bp_valid |= ((cf_type[i] != NoCF & cf_type[i] != Return) | ((cf_type[i] == Return) & ras_predict.valid));
+
+    // or reduce struct
+    always_comb begin
+      // BP cannot be valid if we have a return instruction and the RAS is not giving a valid address
+      // Check that we encountered a control flow and that for a return the RAS
+      // contains a valid prediction.
+      bp_valid = ((cf_type[0] != NoCF & cf_type[0] != Return) |
+                  ((cf_type[0] == Return) & ras_predict.valid));
+    end
+  end else begin : gen_multi_fetch_cf
+    logic [CVA6Cfg.INSTR_PER_FETCH:0] ras_push_prio, ras_pop_prio;
+    logic [CVA6Cfg.INSTR_PER_FETCH:0][CVA6Cfg.VLEN-1:0] ras_update_prio;
+    logic [CVA6Cfg.INSTR_PER_FETCH:0][CVA6Cfg.VLEN-1:0] predict_address_prio;
+    logic [CVA6Cfg.INSTR_PER_FETCH-1:0] bp_valid_entry;
+
+    assign ras_push_prio[CVA6Cfg.INSTR_PER_FETCH] = 1'b0;
+    assign ras_pop_prio[CVA6Cfg.INSTR_PER_FETCH] = 1'b0;
+    assign ras_update_prio[CVA6Cfg.INSTR_PER_FETCH] = '0;
+    assign predict_address_prio[CVA6Cfg.INSTR_PER_FETCH] = '0;
+
+    // Lower-address predictions override higher-address predictions.
+    for (genvar gen_fetch_idx = CVA6Cfg.INSTR_PER_FETCH; gen_fetch_idx > 0; gen_fetch_idx--) begin : gen_cf_priority
+      localparam int unsigned FetchIdx = gen_fetch_idx - 1;
+
+      logic entry_is_jalr, entry_is_jump, entry_is_return, entry_is_branch;
+      logic entry_has_cf_case, entry_branch_taken, entry_jump_taken;
+      logic entry_predict_writes;
+      logic branch_taken_rvi, branch_taken_rvc;
+      logic [CVA6Cfg.VLEN-1:0] entry_predict_address;
+
+      assign entry_is_jalr = {is_branch[FetchIdx], is_return[FetchIdx], is_jump[FetchIdx],
+                              is_jalr[FetchIdx]} == 4'b0001;
+      assign entry_is_jump = {is_branch[FetchIdx], is_return[FetchIdx], is_jump[FetchIdx],
+                              is_jalr[FetchIdx]} == 4'b0010;
+      assign entry_is_return = {is_branch[FetchIdx], is_return[FetchIdx], is_jump[FetchIdx],
+                                is_jalr[FetchIdx]} == 4'b0100;
+      assign entry_is_branch = {is_branch[FetchIdx], is_return[FetchIdx], is_jump[FetchIdx],
+                                is_jalr[FetchIdx]} == 4'b1000;
+      assign entry_has_cf_case = entry_is_jalr | entry_is_jump | entry_is_return | entry_is_branch;
+
+      assign branch_taken_rvi = rvi_branch[FetchIdx] & (bht_prediction_shifted[FetchIdx].valid ?
+                                bht_prediction_shifted[FetchIdx].taken :
+                                rvi_imm[FetchIdx][CVA6Cfg.VLEN-1]);
+      assign branch_taken_rvc = rvc_branch[FetchIdx] & (bht_prediction_shifted[FetchIdx].valid ?
+                                bht_prediction_shifted[FetchIdx].taken :
+                                rvc_imm[FetchIdx][CVA6Cfg.VLEN-1]);
+      assign taken_rvi_cf[FetchIdx] = entry_is_jump ? rvi_jump[FetchIdx] :
+                                      (entry_is_branch ? branch_taken_rvi : 1'b0);
+      assign taken_rvc_cf[FetchIdx] = entry_is_jump ? rvc_jump[FetchIdx] :
+                                      (entry_is_branch ? branch_taken_rvc : 1'b0);
+      assign entry_branch_taken = entry_is_branch & (taken_rvi_cf[FetchIdx] | taken_rvc_cf[FetchIdx]);
+      assign entry_jump_taken = entry_is_jump & (taken_rvi_cf[FetchIdx] | taken_rvc_cf[FetchIdx]);
+
+      assign cf_type[FetchIdx] =
+          (entry_is_jalr && CVA6Cfg.BTBEntries != 0 && btb_prediction_shifted[FetchIdx].valid) ?
+              ariane_pkg::JumpR :
+          entry_is_jump ? ariane_pkg::Jump :
+          entry_is_return ? ariane_pkg::Return :
+          entry_branch_taken ? ariane_pkg::Branch :
+          ariane_pkg::NoCF;
+
+      assign entry_predict_writes =
+          (entry_is_jalr && CVA6Cfg.BTBEntries != 0 && btb_prediction_shifted[FetchIdx].valid) |
+          entry_is_return | entry_jump_taken | entry_branch_taken;
+      assign entry_predict_address =
+          entry_is_return ? ras_predict.ra :
+          ((entry_is_jalr && CVA6Cfg.BTBEntries != 0 && btb_prediction_shifted[FetchIdx].valid) ?
+              btb_prediction_shifted[FetchIdx].target_address :
+              (addr[FetchIdx] + (taken_rvc_cf[FetchIdx] ? rvc_imm[FetchIdx] : rvi_imm[FetchIdx])));
+
+      assign ras_push_prio[FetchIdx] =
+          (entry_has_cf_case | is_call[FetchIdx]) ?
+              (is_call[FetchIdx] & instr_queue_consumed[FetchIdx]) :
+              ras_push_prio[FetchIdx+1];
+      assign ras_pop_prio[FetchIdx] =
+          entry_has_cf_case ?
+              (entry_is_return & ras_predict.valid & instr_queue_consumed[FetchIdx]) :
+              ras_pop_prio[FetchIdx+1];
+      assign ras_update_prio[FetchIdx] =
+          is_call[FetchIdx] ? (addr[FetchIdx] + (rvc_call[FetchIdx] ? 2 : 4)) :
+          ras_update_prio[FetchIdx+1];
+      assign predict_address_prio[FetchIdx] =
+          entry_predict_writes ? entry_predict_address : predict_address_prio[FetchIdx+1];
+
+      assign bp_valid_entry[FetchIdx] = ((cf_type[FetchIdx] != NoCF & cf_type[FetchIdx] != Return) |
+                                         ((cf_type[FetchIdx] == Return) & ras_predict.valid));
+    end
+
+    assign ras_push = ras_push_prio[0];
+    assign ras_pop = ras_pop_prio[0];
+    assign ras_update = ras_update_prio[0];
+    assign predict_address = predict_address_prio[0];
+    assign bp_valid = |bp_valid_entry;
   end
   assign is_mispredict = resolved_branch_i.valid & resolved_branch_i.is_mispredict;
 
   // Cache interface
+  assign icache_dreq_o.req = icache_dreq_req;
+  assign icache_dreq_o.kill_s1 = icache_dreq_kill_s1;
+  assign icache_dreq_o.kill_s2 = icache_dreq_kill_s2;
+  assign icache_dreq_o.spec = icache_dreq_spec;
+  assign icache_dreq_o.vaddr = icache_dreq_vaddr;
   // Gate ICache requests and NPC updates during fence.i
-  assign icache_dreq_o.req = instr_queue_ready & ~halt_frontend_i;
+  assign icache_dreq_req = instr_queue_ready & ~halt_frontend_i;
   assign if_ready = icache_dreq_i.ready & instr_queue_ready & ~halt_frontend_i;
   // We need to flush the cache pipeline if:
   // 1. We mispredicted
   // 2. Want to flush the whole processor front-end
   // 3. Need to replay an instruction because the fetch-fifo was full
-  assign icache_dreq_o.kill_s1 = is_mispredict | flush_i | replay;
+  assign icache_dreq_kill_s1 = is_mispredict | flush_i | replay;
   // if we have a valid branch-prediction we need to only kill the last cache request
   // also if we killed the first stage we also need to kill the second stage (inclusive flush)
-  assign icache_dreq_o.kill_s2 = icache_dreq_o.kill_s1 | bp_valid;
+  assign icache_dreq_kill_s2 = icache_dreq_kill_s1 | bp_valid;
 
   // Update Control Flow Predictions
   bht_update_t bht_update;
@@ -327,7 +420,7 @@ module frontend
   // assert on branch, deassert when resolved
   logic speculative_q, speculative_d;
   assign speculative_d = (speculative_q && !resolved_branch_i.valid || |is_branch || |is_return || |is_jalr) && !flush_i;
-  assign icache_dreq_o.spec = speculative_d;
+  assign icache_dreq_spec = speculative_d;
 
   assign bht_update.valid = resolved_branch_i.valid
                                 & (resolved_branch_i.cf_type == ariane_pkg::Branch);
@@ -411,7 +504,7 @@ module frontend
     // enter debug on a hard-coded base-address
     if (CVA6Cfg.DebugEn && set_debug_pc_i)
       npc_d = CVA6Cfg.DmBaseAddress[CVA6Cfg.VLEN-1:0] + CVA6Cfg.HaltAddress[CVA6Cfg.VLEN-1:0];
-    icache_dreq_o.vaddr = fetch_address;
+    icache_dreq_vaddr = fetch_address;
   end
 
   logic [CVA6Cfg.FETCH_WIDTH-1:0] icache_data;

@@ -133,6 +133,48 @@ module decoder
     MUX_RD_RS3
   } imm_select;
 
+  function automatic logic is_legal_rounding_mode(input logic [2:0] rm);
+    unique case (rm)
+      3'b000, 3'b001, 3'b010, 3'b011, 3'b100: return 1'b1;
+      default: return 1'b0;
+    endcase
+  endfunction
+
+  function automatic logic is_rm_0_to_2(input logic [2:0] rm);
+    unique case (rm)
+      3'b000, 3'b001, 3'b010: return 1'b1;
+      default: return 1'b0;
+    endcase
+  endfunction
+
+  function automatic logic is_rm_0_to_1(input logic [2:0] rm);
+    unique case (rm)
+      3'b000, 3'b001: return 1'b1;
+      default: return 1'b0;
+    endcase
+  endfunction
+
+  function automatic logic is_rm_0_to_2_or_4_to_6(input logic [2:0] rm);
+    unique case (rm)
+      3'b000, 3'b001, 3'b010, 3'b100, 3'b101, 3'b110: return 1'b1;
+      default: return 1'b0;
+    endcase
+  endfunction
+
+  function automatic logic is_rm_0_to_1_or_4_to_5(input logic [2:0] rm);
+    unique case (rm)
+      3'b000, 3'b001, 3'b100, 3'b101: return 1'b1;
+      default: return 1'b0;
+    endcase
+  endfunction
+
+  function automatic logic is_machine_or_supervisor_priv(input riscv::priv_lvl_t priv_lvl);
+    unique case (priv_lvl)
+      riscv::PRIV_LVL_M, riscv::PRIV_LVL_S: return 1'b1;
+      default: return 1'b0;
+    endcase
+  endfunction
+
   logic [CVA6Cfg.XLEN-1:0] imm_i_type;
   logic [CVA6Cfg.XLEN-1:0] imm_s_type;
   logic [CVA6Cfg.XLEN-1:0] imm_sb_type;
@@ -171,6 +213,32 @@ module decoder
     assign acc_is_control_flow_instr = 1'b0;
   end
 
+  scoreboard_entry_t decoded_instruction;
+  logic [CVA6Cfg.XLEN-1:0] instruction_result;
+  logic instruction_use_imm;
+  exception_t instruction_ex;
+
+  assign instruction_o.pc                       = decoded_instruction.pc;
+  assign instruction_o.trans_id                 = decoded_instruction.trans_id;
+  assign instruction_o.fu                       = decoded_instruction.fu;
+  assign instruction_o.op                       = decoded_instruction.op;
+  assign instruction_o.rs1                      = decoded_instruction.rs1;
+  assign instruction_o.rs2                      = decoded_instruction.rs2;
+  assign instruction_o.rd                       = decoded_instruction.rd;
+  assign instruction_o.result                   = instruction_result;
+  assign instruction_o.valid                    = instruction_ex.valid;
+  assign instruction_o.use_imm                  = instruction_use_imm;
+  assign instruction_o.use_zimm                 = decoded_instruction.use_zimm;
+  assign instruction_o.use_pc                   = decoded_instruction.use_pc;
+  assign instruction_o.ex                       = instruction_ex;
+  assign instruction_o.bp                       = decoded_instruction.bp;
+  assign instruction_o.is_compressed            = decoded_instruction.is_compressed;
+  assign instruction_o.is_macro_instr           = decoded_instruction.is_macro_instr;
+  assign instruction_o.is_last_macro_instr      = decoded_instruction.is_last_macro_instr;
+  assign instruction_o.is_double_rd_macro_instr = decoded_instruction.is_double_rd_macro_instr;
+  assign instruction_o.vfp                      = decoded_instruction.vfp;
+  assign instruction_o.is_zcmt                  = decoded_instruction.is_zcmt;
+
   always_comb begin : decoder
 
     imm_select                             = NOIMM;
@@ -180,22 +248,26 @@ module decoder
     illegal_instr_bm                       = 1'b0;
     illegal_instr_zic                      = 1'b0;
     virtual_illegal_instr                  = 1'b0;
-    instruction_o.pc                       = pc_i;
-    instruction_o.trans_id                 = '0;
-    instruction_o.fu                       = NONE;
-    instruction_o.op                       = ariane_pkg::ADD;
-    instruction_o.rs1                      = '0;
-    instruction_o.rs2                      = '0;
-    instruction_o.rd                       = '0;
-    instruction_o.use_pc                   = 1'b0;
-    instruction_o.is_compressed            = is_compressed_i;
-    instruction_o.is_macro_instr           = is_macro_instr_i;
-    instruction_o.is_last_macro_instr      = is_last_macro_instr_i;
-    instruction_o.is_double_rd_macro_instr = is_double_rd_macro_instr_i;
-    instruction_o.use_zimm                 = 1'b0;
-    instruction_o.bp                       = branch_predict_i;
-    instruction_o.vfp                      = 1'b0;
-    instruction_o.is_zcmt                  = is_zcmt_i;
+    decoded_instruction.pc                       = pc_i;
+    decoded_instruction.trans_id                 = '0;
+    decoded_instruction.fu                       = NONE;
+    decoded_instruction.op                       = ariane_pkg::ADD;
+    decoded_instruction.rs1                      = '0;
+    decoded_instruction.rs2                      = '0;
+    decoded_instruction.rd                       = '0;
+    decoded_instruction.use_pc                   = 1'b0;
+    decoded_instruction.is_compressed            = is_compressed_i;
+    decoded_instruction.is_macro_instr           = is_macro_instr_i;
+    decoded_instruction.is_last_macro_instr      = is_last_macro_instr_i;
+    decoded_instruction.is_double_rd_macro_instr = is_double_rd_macro_instr_i;
+    decoded_instruction.use_zimm                 = 1'b0;
+    decoded_instruction.bp                       = branch_predict_i;
+    decoded_instruction.vfp                      = 1'b0;
+    decoded_instruction.is_zcmt                  = is_zcmt_i;
+    decoded_instruction.result                   = '0;
+    decoded_instruction.valid                    = 1'b0;
+    decoded_instruction.use_imm                  = 1'b0;
+    decoded_instruction.ex                       = '0;
     ecall                                  = 1'b0;
     ebreak                                 = 1'b0;
     check_fprm                             = 1'b0;
@@ -204,10 +276,10 @@ module decoder
     if (~ex_i.valid) begin
       case (instr.rtype.opcode)
         riscv::OpcodeSystem: begin
-          instruction_o.fu = CSR;
-          instruction_o.rs1 = instr.itype.rs1;
-          instruction_o.rs2 = instr.rtype.rs2;   //TODO: needs to be checked if better way is available
-          instruction_o.rd = instr.itype.rd;
+          decoded_instruction.fu = CSR;
+          decoded_instruction.rs1 = instr.itype.rs1;
+          decoded_instruction.rs2 = instr.rtype.rs2;   //TODO: needs to be checked if better way is available
+          decoded_instruction.rd = instr.itype.rd;
 
           unique case (instr.itype.funct3)
             3'b000: begin
@@ -228,7 +300,7 @@ module decoder
                 // SRET
                 12'b1_0000_0010: begin
                   if (CVA6Cfg.RVS) begin
-                    instruction_o.op = ariane_pkg::SRET;
+                    decoded_instruction.op = ariane_pkg::SRET;
                     // check privilege level, SRET can only be executed in S and M mode
                     // we'll just decode an illegal instruction if we are in the wrong privilege level
                     if (CVA6Cfg.RVU && priv_lvl_i == riscv::PRIV_LVL_U) begin
@@ -238,7 +310,7 @@ module decoder
                         illegal_instr = 1'b1;
                       end
                       //  do not change privilege level if this is an illegal instruction
-                      instruction_o.op = ariane_pkg::ADD;
+                      decoded_instruction.op = ariane_pkg::ADD;
                     end
                     // if we are in S-Mode and Trap SRET (tsr) is set -> trap on illegal instruction
                     if (priv_lvl_i == riscv::PRIV_LVL_S && tsr_i) begin
@@ -248,16 +320,16 @@ module decoder
                         illegal_instr = 1'b1;
                       end
                       //  do not change privilege level if this is an illegal instruction
-                      instruction_o.op = ariane_pkg::ADD;
+                      decoded_instruction.op = ariane_pkg::ADD;
                     end
                   end else begin
                     illegal_instr = 1'b1;
-                    instruction_o.op = ariane_pkg::ADD;
+                    decoded_instruction.op = ariane_pkg::ADD;
                   end
                 end
                 // MRET
                 12'b11_0000_0010: begin
-                  instruction_o.op = ariane_pkg::MRET;
+                  decoded_instruction.op = ariane_pkg::MRET;
                   // check privilege level, MRET can only be executed in M mode
                   // otherwise we decode an illegal instruction
                   if ((CVA6Cfg.RVS && priv_lvl_i == riscv::PRIV_LVL_S) || (CVA6Cfg.RVU && priv_lvl_i == riscv::PRIV_LVL_U))
@@ -265,7 +337,7 @@ module decoder
                 end
                 // DRET
                 12'b111_1011_0010: begin
-                  instruction_o.op = ariane_pkg::DRET;
+                  decoded_instruction.op = ariane_pkg::DRET;
                   if (CVA6Cfg.DebugEn) begin
                     // check that we are in debug mode when executing this instruction
                     illegal_instr = (!debug_mode_i) ? 1'b1 : illegal_instr;
@@ -275,22 +347,22 @@ module decoder
                 end
                 // WFI
                 12'b1_0000_0101: begin
-                  instruction_o.op = ariane_pkg::WFI;
+                  decoded_instruction.op = ariane_pkg::WFI;
                   // if timeout wait is set, trap on an illegal instruction in S Mode
                   // (after 0 cycles timeout)
                   if (CVA6Cfg.RVS && priv_lvl_i == riscv::PRIV_LVL_S && tw_i) begin
                     illegal_instr = 1'b1;
-                    instruction_o.op = ariane_pkg::ADD;
+                    decoded_instruction.op = ariane_pkg::ADD;
                   end
                   if (CVA6Cfg.RVH && priv_lvl_i == riscv::PRIV_LVL_S && v_i && vtw_i && !tw_i) begin
                     virtual_illegal_instr = 1'b1;
-                    instruction_o.op = ariane_pkg::ADD;
+                    decoded_instruction.op = ariane_pkg::ADD;
                   end
                   // we don't support U mode interrupts so WFI is illegal in this context
                   if (CVA6Cfg.RVU && priv_lvl_i == riscv::PRIV_LVL_U) begin
                     if (CVA6Cfg.RVH && v_i) virtual_illegal_instr = 1'b1;
                     else illegal_instr = 1'b1;
-                    instruction_o.op = ariane_pkg::ADD;
+                    decoded_instruction.op = ariane_pkg::ADD;
                   end
                 end
                 // SFENCE.VMA
@@ -302,9 +374,9 @@ module decoder
                     if (CVA6Cfg.RVH && v_i) begin
                       virtual_illegal_instr = (priv_lvl_i == riscv::PRIV_LVL_S) ? 1'b0 : 1'b1;
                     end else begin
-                      illegal_instr    = (CVA6Cfg.RVS && (priv_lvl_i inside {riscv::PRIV_LVL_M, riscv::PRIV_LVL_S}) && instr.itype.rd == '0) ? 1'b0 : 1'b1;
+                      illegal_instr = (CVA6Cfg.RVS && is_machine_or_supervisor_priv(priv_lvl_i) && instr.itype.rd == '0) ? 1'b0 : 1'b1;
                     end
-                    instruction_o.op = ariane_pkg::SFENCE_VMA;
+                    decoded_instruction.op = ariane_pkg::SFENCE_VMA;
                     // check TVM flag and intercept SFENCE.VMA call if necessary
                     if (CVA6Cfg.RVS && priv_lvl_i == riscv::PRIV_LVL_S && tvm_i) begin
                       if (CVA6Cfg.RVH && v_i) virtual_illegal_instr = 1'b1;
@@ -317,18 +389,18 @@ module decoder
                       if (v_i) begin
                         virtual_illegal_instr = 1'b1;
                       end else begin
-                        illegal_instr    = ((priv_lvl_i inside {riscv::PRIV_LVL_M, riscv::PRIV_LVL_S}) && instr.itype.rd == '0) ? 1'b0 : 1'b1;
+                        illegal_instr = (is_machine_or_supervisor_priv(priv_lvl_i) && instr.itype.rd == '0) ? 1'b0 : 1'b1;
                       end
-                      instruction_o.op = ariane_pkg::HFENCE_VVMA;
+                      decoded_instruction.op = ariane_pkg::HFENCE_VVMA;
                     end else if (instr.instr[31:25] == 7'b110001) begin
                       // check privilege level, HFENCE.GVMA can only be executed in M/S mode
                       // otherwise decode an illegal instruction or virtual illegal instruction
                       if (v_i) begin
                         virtual_illegal_instr = 1'b1;
                       end else begin
-                        illegal_instr    = ((priv_lvl_i inside {riscv::PRIV_LVL_M, riscv::PRIV_LVL_S}) && instr.itype.rd == '0) ? 1'b0 : 1'b1;
+                        illegal_instr = (is_machine_or_supervisor_priv(priv_lvl_i) && instr.itype.rd == '0) ? 1'b0 : 1'b1;
                       end
-                      instruction_o.op = ariane_pkg::HFENCE_GVMA;
+                      decoded_instruction.op = ariane_pkg::HFENCE_GVMA;
                       // check TVM flag and intercept HFENCE.GVMA call if necessary
                       if (priv_lvl_i == riscv::PRIV_LVL_S && !v_i && tvm_i) illegal_instr = 1'b1;
                     end else begin
@@ -344,15 +416,15 @@ module decoder
               // Hypervisor load/store instructions
               if (CVA6Cfg.RVH) begin
                 if (instr.instr[25] != 1'b0) begin
-                  instruction_o.fu = STORE;
+                  decoded_instruction.fu = STORE;
                   imm_select = NOIMM;
-                  instruction_o.rs1 = instr.stype.rs1;
-                  instruction_o.rs2 = instr.stype.rs2;
+                  decoded_instruction.rs1 = instr.stype.rs1;
+                  decoded_instruction.rs2 = instr.stype.rs2;
                 end else begin
-                  instruction_o.fu = LOAD;
+                  decoded_instruction.fu = LOAD;
                   imm_select = NOIMM;
-                  instruction_o.rs1 = instr.itype.rs1;
-                  instruction_o.rd = instr.itype.rd;
+                  decoded_instruction.rs1 = instr.itype.rs1;
+                  decoded_instruction.rd = instr.itype.rd;
                 end
 
                 // Hypervisor load/store instructions when V=1 cause virtual instruction
@@ -362,39 +434,39 @@ module decoder
                 unique case (instr.rtype.funct7)
                   7'b011_0000: begin
                     if (instr.rtype.rs2 == 5'b0) begin
-                      instruction_o.op = ariane_pkg::HLV_B;
+                      decoded_instruction.op = ariane_pkg::HLV_B;
                     end
                     if (instr.rtype.rs2 == 5'b1) begin
-                      instruction_o.op = ariane_pkg::HLV_BU;
+                      decoded_instruction.op = ariane_pkg::HLV_BU;
                     end
                   end
                   7'b011_0010: begin
                     if (instr.rtype.rs2 == 5'b0) begin
-                      instruction_o.op = ariane_pkg::HLV_H;
+                      decoded_instruction.op = ariane_pkg::HLV_H;
                     end
                     if (instr.rtype.rs2 == 5'b1) begin
-                      instruction_o.op = ariane_pkg::HLV_HU;
+                      decoded_instruction.op = ariane_pkg::HLV_HU;
                     end
                     if (instr.rtype.rs2 == 5'b11) begin
-                      instruction_o.op = ariane_pkg::HLVX_HU;
+                      decoded_instruction.op = ariane_pkg::HLVX_HU;
                     end
                   end
                   7'b011_0100: begin
                     if (instr.rtype.rs2 == 5'b0) begin
-                      instruction_o.op = ariane_pkg::HLV_W;
+                      decoded_instruction.op = ariane_pkg::HLV_W;
                     end
                     if (instr.rtype.rs2 == 5'b1) begin
-                      instruction_o.op = ariane_pkg::HLV_WU;
+                      decoded_instruction.op = ariane_pkg::HLV_WU;
                     end
                     if (instr.rtype.rs2 == 5'b11) begin
-                      instruction_o.op = ariane_pkg::HLVX_WU;
+                      decoded_instruction.op = ariane_pkg::HLVX_WU;
                     end
                   end
-                  7'b011_0001: instruction_o.op = ariane_pkg::HSV_B;
-                  7'b011_0011: instruction_o.op = ariane_pkg::HSV_H;
-                  7'b011_0101: instruction_o.op = ariane_pkg::HSV_W;
-                  7'b011_0110: instruction_o.op = ariane_pkg::HLV_D;
-                  7'b011_0111: instruction_o.op = ariane_pkg::HSV_D;
+                  7'b011_0001: decoded_instruction.op = ariane_pkg::HSV_B;
+                  7'b011_0011: decoded_instruction.op = ariane_pkg::HSV_H;
+                  7'b011_0101: decoded_instruction.op = ariane_pkg::HSV_W;
+                  7'b011_0110: decoded_instruction.op = ariane_pkg::HLV_D;
+                  7'b011_0111: decoded_instruction.op = ariane_pkg::HSV_D;
                   default: illegal_instr = 1'b1;
 
                 endcase
@@ -413,79 +485,79 @@ module decoder
             // atomically swaps values in the CSR and integer register
             3'b001: begin  // CSRRW
               imm_select = IIMM;
-              instruction_o.op = ariane_pkg::CSR_WRITE;
+              decoded_instruction.op = ariane_pkg::CSR_WRITE;
             end
             // atomically set values in the CSR and write back to rd
             3'b010: begin  // CSRRS
               imm_select = IIMM;
               // this is just a read
-              if (instr.itype.rs1 == '0) instruction_o.op = ariane_pkg::CSR_READ;
-              else instruction_o.op = ariane_pkg::CSR_SET;
+              if (instr.itype.rs1 == '0) decoded_instruction.op = ariane_pkg::CSR_READ;
+              else decoded_instruction.op = ariane_pkg::CSR_SET;
             end
             // atomically clear values in the CSR and write back to rd
             3'b011: begin  // CSRRC
               imm_select = IIMM;
               // this is just a read
-              if (instr.itype.rs1 == '0) instruction_o.op = ariane_pkg::CSR_READ;
-              else instruction_o.op = ariane_pkg::CSR_CLEAR;
+              if (instr.itype.rs1 == '0) decoded_instruction.op = ariane_pkg::CSR_READ;
+              else decoded_instruction.op = ariane_pkg::CSR_CLEAR;
             end
             // use zimm and iimm
             3'b101: begin  // CSRRWI
-              instruction_o.rs1 = instr.itype.rs1;
+              decoded_instruction.rs1 = instr.itype.rs1;
               imm_select = IIMM;
-              instruction_o.use_zimm = 1'b1;
-              instruction_o.op = ariane_pkg::CSR_WRITE;
+              decoded_instruction.use_zimm = 1'b1;
+              decoded_instruction.op = ariane_pkg::CSR_WRITE;
             end
             3'b110: begin  // CSRRSI
-              instruction_o.rs1 = instr.itype.rs1;
+              decoded_instruction.rs1 = instr.itype.rs1;
               imm_select = IIMM;
-              instruction_o.use_zimm = 1'b1;
+              decoded_instruction.use_zimm = 1'b1;
               // this is just a read
-              if (instr.itype.rs1 == 5'b0) instruction_o.op = ariane_pkg::CSR_READ;
-              else instruction_o.op = ariane_pkg::CSR_SET;
+              if (instr.itype.rs1 == 5'b0) decoded_instruction.op = ariane_pkg::CSR_READ;
+              else decoded_instruction.op = ariane_pkg::CSR_SET;
             end
             3'b111: begin  // CSRRCI
-              instruction_o.rs1 = instr.itype.rs1;
+              decoded_instruction.rs1 = instr.itype.rs1;
               imm_select = IIMM;
-              instruction_o.use_zimm = 1'b1;
+              decoded_instruction.use_zimm = 1'b1;
               // this is just a read
-              if (instr.itype.rs1 == '0) instruction_o.op = ariane_pkg::CSR_READ;
-              else instruction_o.op = ariane_pkg::CSR_CLEAR;
+              if (instr.itype.rs1 == '0) decoded_instruction.op = ariane_pkg::CSR_READ;
+              else decoded_instruction.op = ariane_pkg::CSR_CLEAR;
             end
             default: illegal_instr = 1'b1;
           endcase
         end
         // Memory ordering instructions
         riscv::OpcodeMiscMem: begin
-          instruction_o.fu  = CSR;
-          instruction_o.rs1 = '0;
-          instruction_o.rs2 = '0;
-          instruction_o.rd  = '0;
+          decoded_instruction.fu  = CSR;
+          decoded_instruction.rs1 = '0;
+          decoded_instruction.rs2 = '0;
+          decoded_instruction.rd  = '0;
 
           case (instr.stype.funct3)
             // FENCE
             // Currently implemented as a whole DCache flush boldly ignoring other things
-            3'b000: instruction_o.op = ariane_pkg::FENCE;
+            3'b000: decoded_instruction.op = ariane_pkg::FENCE;
             // FENCE.I
-            3'b001: instruction_o.op = ariane_pkg::FENCE_I;
+            3'b001: decoded_instruction.op = ariane_pkg::FENCE_I;
             // CBO - optional
             3'b010: begin
               if (CVA6Cfg.RVZiCbom) begin
-                instruction_o.fu = STORE;
-                instruction_o.rs1[4:0] = instr.itype.rs1;
+                decoded_instruction.fu = STORE;
+                decoded_instruction.rs1[4:0] = instr.itype.rs1;
                 // not used - zero
-                instruction_o.rs2[4:0] = '0;
+                decoded_instruction.rs2[4:0] = '0;
                 unique case (instr.itype.imm)
                   // CBO.INVAL
-                  12'b000000000000: instruction_o.op = ariane_pkg::CBO_INVAL;
+                  12'b000000000000: decoded_instruction.op = ariane_pkg::CBO_INVAL;
                   // CBO.CLEAN
-                  12'b000000000001: instruction_o.op = ariane_pkg::CBO_CLEAN;
+                  12'b000000000001: decoded_instruction.op = ariane_pkg::CBO_CLEAN;
                   // CBO.FLUSH
-                  12'b000000000010: instruction_o.op = ariane_pkg::CBO_FLUSH;
+                  12'b000000000010: decoded_instruction.op = ariane_pkg::CBO_FLUSH;
                   default: illegal_instr = 1'b1;
                 endcase
 
-                if (instruction_o.op == ariane_pkg::CBO_INVAL) begin
+                if (decoded_instruction.op == ariane_pkg::CBO_INVAL) begin
                   // permissions checks
                   if((priv_lvl_i != riscv::PRIV_LVL_M && mcbie_i == riscv::CBIE_ILLEGAL) ||
                     (CVA6Cfg.RVU && priv_lvl_i == riscv::PRIV_LVL_U && scbie_i == riscv::CBIE_ILLEGAL)) begin
@@ -502,13 +574,14 @@ module decoder
                       (priv_lvl_i == riscv::PRIV_LVL_HS && hcbie_i == riscv::CBIE_FLUSH) ||
                       (priv_lvl_i == riscv::PRIV_LVL_U && hu_i && (hcbie_i == riscv::CBIE_FLUSH || scbie_i == riscv::CBIE_FLUSH))) begin
                       // have to flush instead of invalidate
-                      instruction_o.op = ariane_pkg::CBO_FLUSH;
+                      decoded_instruction.op = ariane_pkg::CBO_FLUSH;
                     end
                   end
                   // otherwise: normal invalidate
                 end
 
-                if (instruction_o.op inside {ariane_pkg::CBO_CLEAN, ariane_pkg::CBO_FLUSH}) begin
+                if ((decoded_instruction.op == ariane_pkg::CBO_CLEAN) ||
+                    (decoded_instruction.op == ariane_pkg::CBO_FLUSH)) begin
                   if((priv_lvl_i != riscv::PRIV_LVL_M && !mcbcfe_i) ||
                     (priv_lvl_i == riscv::PRIV_LVL_U && !scbcfe_i)) begin
                     // disabled in m-mode / s-mode
@@ -549,72 +622,72 @@ module decoder
             if (CVA6Cfg.FpPresent && CVA6Cfg.XFVec && fs_i != riscv::Off && ((CVA6Cfg.RVH && (!v_i || vfs_i != riscv::Off)) || !CVA6Cfg.RVH)) begin
               automatic logic allow_replication;  // control honoring of replication flag
 
-              instruction_o.fu  = FPU_VEC;  // Same unit, but sets 'vectorial' signal
-              instruction_o.rs1 = instr.rvftype.rs1;
-              instruction_o.rs2 = instr.rvftype.rs2;
-              instruction_o.rd  = instr.rvftype.rd;
+              decoded_instruction.fu  = FPU_VEC;  // Same unit, but sets 'vectorial' signal
+              decoded_instruction.rs1 = instr.rvftype.rs1;
+              decoded_instruction.rs2 = instr.rvftype.rs2;
+              decoded_instruction.rd  = instr.rvftype.rd;
               check_fprm        = 1'b1;
               allow_replication = 1'b1;
               // decode vectorial FP instruction
               unique case (instr.rvftype.vecfltop)
                 5'b00001: begin
-                  instruction_o.op  = ariane_pkg::FADD;  // vfadd.vfmt - Vectorial FP Addition
-                  instruction_o.rs1 = '0;  // Operand A is set to 0
-                  instruction_o.rs2 = instr.rvftype.rs1;  // Operand B is set to rs1
+                  decoded_instruction.op  = ariane_pkg::FADD;  // vfadd.vfmt - Vectorial FP Addition
+                  decoded_instruction.rs1 = '0;  // Operand A is set to 0
+                  decoded_instruction.rs2 = instr.rvftype.rs1;  // Operand B is set to rs1
                   imm_select        = IIMM;  // Operand C is set to rs2
                 end
                 5'b00010: begin
-                  instruction_o.op = ariane_pkg::FSUB;  // vfsub.vfmt - Vectorial FP Subtraction
-                  instruction_o.rs1 = '0;  // Operand A is set to 0
-                  instruction_o.rs2 = instr.rvftype.rs1;  // Operand B is set to rs1
+                  decoded_instruction.op = ariane_pkg::FSUB;  // vfsub.vfmt - Vectorial FP Subtraction
+                  decoded_instruction.rs1 = '0;  // Operand A is set to 0
+                  decoded_instruction.rs2 = instr.rvftype.rs1;  // Operand B is set to rs1
                   imm_select = IIMM;  // Operand C is set to rs2
                 end
                 5'b00011:
-                instruction_o.op = ariane_pkg::FMUL;  // vfmul.vfmt - Vectorial FP Multiplication
+                decoded_instruction.op = ariane_pkg::FMUL;  // vfmul.vfmt - Vectorial FP Multiplication
                 5'b00100:
-                instruction_o.op = ariane_pkg::FDIV;  // vfdiv.vfmt - Vectorial FP Division
+                decoded_instruction.op = ariane_pkg::FDIV;  // vfdiv.vfmt - Vectorial FP Division
                 5'b00101: begin
-                  instruction_o.op = ariane_pkg::VFMIN;  // vfmin.vfmt - Vectorial FP Minimum
+                  decoded_instruction.op = ariane_pkg::VFMIN;  // vfmin.vfmt - Vectorial FP Minimum
                   check_fprm       = 1'b0;  // rounding mode irrelevant
                 end
                 5'b00110: begin
-                  instruction_o.op = ariane_pkg::VFMAX;  // vfmax.vfmt - Vectorial FP Maximum
+                  decoded_instruction.op = ariane_pkg::VFMAX;  // vfmax.vfmt - Vectorial FP Maximum
                   check_fprm       = 1'b0;  // rounding mode irrelevant
                 end
                 5'b00111: begin
-                  instruction_o.op  = ariane_pkg::FSQRT;  // vfsqrt.vfmt - Vectorial FP Square Root
+                  decoded_instruction.op  = ariane_pkg::FSQRT;  // vfsqrt.vfmt - Vectorial FP Square Root
                   allow_replication = 1'b0;  // only one operand
                   if (instr.rvftype.rs2 != 5'b00000) illegal_instr = 1'b1;  // rs2 must be 0
                 end
                 5'b01000: begin
-                  instruction_o.op = ariane_pkg::FMADD; // vfmac.vfmt - Vectorial FP Multiply-Accumulate
+                  decoded_instruction.op = ariane_pkg::FMADD; // vfmac.vfmt - Vectorial FP Multiply-Accumulate
                   imm_select = SIMM;  // rd into result field (upper bits don't matter)
                 end
                 5'b01001: begin
-                  instruction_o.op = ariane_pkg::FMSUB; // vfmre.vfmt - Vectorial FP Multiply-Reduce
+                  decoded_instruction.op = ariane_pkg::FMSUB; // vfmre.vfmt - Vectorial FP Multiply-Reduce
                   imm_select = SIMM;  // rd into result field (upper bits don't matter)
                 end
                 5'b01100: begin
-                  unique case (instr.rvftype.rs2) inside // operation encoded in rs2, `inside` for matching ?
+                  unique casez (instr.rvftype.rs2) // operation encoded in rs2, with ? wildcards
                     5'b00000: begin
-                      instruction_o.rs2 = instr.rvftype.rs1; // set rs2 = rs1 so we can map FMV to SGNJ in the unit
+                      decoded_instruction.rs2 = instr.rvftype.rs1; // set rs2 = rs1 so we can map FMV to SGNJ in the unit
                       if (instr.rvftype.repl)
-                        instruction_o.op = ariane_pkg::FMV_X2F;  // vfmv.vfmt.x - GPR to FPR Move
-                      else instruction_o.op = ariane_pkg::FMV_F2X;  // vfmv.x.vfmt - FPR to GPR Move
+                        decoded_instruction.op = ariane_pkg::FMV_X2F;  // vfmv.vfmt.x - GPR to FPR Move
+                      else decoded_instruction.op = ariane_pkg::FMV_F2X;  // vfmv.x.vfmt - FPR to GPR Move
                       check_fprm = 1'b0;  // no rounding for moves
                     end
                     5'b00001: begin
-                      instruction_o.op  = ariane_pkg::FCLASS; // vfclass.vfmt - Vectorial FP Classify
+                      decoded_instruction.op  = ariane_pkg::FCLASS; // vfclass.vfmt - Vectorial FP Classify
                       check_fprm = 1'b0;  // no rounding for classification
                       allow_replication = 1'b0;  // R must not be set
                     end
                     5'b00010:
-                    instruction_o.op = ariane_pkg::FCVT_F2I; // vfcvt.x.vfmt - Vectorial FP to Int Conversion
+                    decoded_instruction.op = ariane_pkg::FCVT_F2I; // vfcvt.x.vfmt - Vectorial FP to Int Conversion
                     5'b00011:
-                    instruction_o.op = ariane_pkg::FCVT_I2F; // vfcvt.vfmt.x - Vectorial Int to FP Conversion
+                    decoded_instruction.op = ariane_pkg::FCVT_I2F; // vfcvt.vfmt.x - Vectorial Int to FP Conversion
                     5'b001??: begin
-                      instruction_o.op       = ariane_pkg::FCVT_F2F; // vfcvt.vfmt.vfmt - Vectorial FP to FP Conversion
-                      instruction_o.rs2 = instr.rvftype.rd; // set rs2 = rd as target vector for conversion
+                      decoded_instruction.op       = ariane_pkg::FCVT_F2F; // vfcvt.vfmt.vfmt - Vectorial FP to FP Conversion
+                      decoded_instruction.rs2 = instr.rvftype.rd; // set rs2 = rd as target vector for conversion
                       imm_select = IIMM;  // rs2 holds part of the instruction
                       // TODO CHECK R bit for valid fmt combinations
                       // determine source format
@@ -632,42 +705,42 @@ module decoder
                 end
                 5'b01101: begin
                   check_fprm = 1'b0;  // no rounding for sign-injection
-                  instruction_o.op = ariane_pkg::VFSGNJ; // vfsgnj.vfmt - Vectorial FP Sign Injection
+                  decoded_instruction.op = ariane_pkg::VFSGNJ; // vfsgnj.vfmt - Vectorial FP Sign Injection
                 end
                 5'b01110: begin
                   check_fprm = 1'b0;  // no rounding for sign-injection
-                  instruction_o.op = ariane_pkg::VFSGNJN; // vfsgnjn.vfmt - Vectorial FP Negated Sign Injection
+                  decoded_instruction.op = ariane_pkg::VFSGNJN; // vfsgnjn.vfmt - Vectorial FP Negated Sign Injection
                 end
                 5'b01111: begin
                   check_fprm = 1'b0;  // no rounding for sign-injection
-                  instruction_o.op = ariane_pkg::VFSGNJX; // vfsgnjx.vfmt - Vectorial FP XORed Sign Injection
+                  decoded_instruction.op = ariane_pkg::VFSGNJX; // vfsgnjx.vfmt - Vectorial FP XORed Sign Injection
                 end
                 5'b10000: begin
                   check_fprm       = 1'b0;  // no rounding for comparisons
-                  instruction_o.op = ariane_pkg::VFEQ;  // vfeq.vfmt - Vectorial FP Equality
+                  decoded_instruction.op = ariane_pkg::VFEQ;  // vfeq.vfmt - Vectorial FP Equality
                 end
                 5'b10001: begin
                   check_fprm       = 1'b0;  // no rounding for comparisons
-                  instruction_o.op = ariane_pkg::VFNE;  // vfne.vfmt - Vectorial FP Non-Equality
+                  decoded_instruction.op = ariane_pkg::VFNE;  // vfne.vfmt - Vectorial FP Non-Equality
                 end
                 5'b10010: begin
                   check_fprm       = 1'b0;  // no rounding for comparisons
-                  instruction_o.op = ariane_pkg::VFLT;  // vfle.vfmt - Vectorial FP Less Than
+                  decoded_instruction.op = ariane_pkg::VFLT;  // vfle.vfmt - Vectorial FP Less Than
                 end
                 5'b10011: begin
                   check_fprm = 1'b0;  // no rounding for comparisons
-                  instruction_o.op = ariane_pkg::VFGE;  // vfge.vfmt - Vectorial FP Greater or Equal
+                  decoded_instruction.op = ariane_pkg::VFGE;  // vfge.vfmt - Vectorial FP Greater or Equal
                 end
                 5'b10100: begin
                   check_fprm       = 1'b0;  // no rounding for comparisons
-                  instruction_o.op = ariane_pkg::VFLE;  // vfle.vfmt - Vectorial FP Less or Equal
+                  decoded_instruction.op = ariane_pkg::VFLE;  // vfle.vfmt - Vectorial FP Less or Equal
                 end
                 5'b10101: begin
                   check_fprm       = 1'b0;  // no rounding for comparisons
-                  instruction_o.op = ariane_pkg::VFGT;  // vfgt.vfmt - Vectorial FP Greater Than
+                  decoded_instruction.op = ariane_pkg::VFGT;  // vfgt.vfmt - Vectorial FP Greater Than
                 end
                 5'b11000: begin
-                  instruction_o.op  = ariane_pkg::VFCPKAB_S; // vfcpka/b.vfmt.s - Vectorial FP Cast-and-Pack from 2x FP32, lowest 4 entries
+                  decoded_instruction.op  = ariane_pkg::VFCPKAB_S; // vfcpka/b.vfmt.s - Vectorial FP Cast-and-Pack from 2x FP32, lowest 4 entries
                   imm_select = SIMM;  // rd into result field (upper bits don't matter)
                   if (~CVA6Cfg.RVF)
                     illegal_instr = 1'b1;  // if we don't support RVF, we can't cast from FP32
@@ -696,7 +769,7 @@ module decoder
                   endcase
                 end
                 5'b11001: begin
-                  instruction_o.op  = ariane_pkg::VFCPKCD_S; // vfcpkc/d.vfmt.s - Vectorial FP Cast-and-Pack from 2x FP32, second 4 entries
+                  decoded_instruction.op  = ariane_pkg::VFCPKCD_S; // vfcpkc/d.vfmt.s - Vectorial FP Cast-and-Pack from 2x FP32, second 4 entries
                   imm_select = SIMM;  // rd into result field (upper bits don't matter)
                   if (~CVA6Cfg.RVF)
                     illegal_instr = 1'b1;  // if we don't support RVF, we can't cast from FP32
@@ -714,7 +787,7 @@ module decoder
                   endcase
                 end
                 5'b11010: begin
-                  instruction_o.op  = ariane_pkg::VFCPKAB_D; // vfcpka/b.vfmt.d - Vectorial FP Cast-and-Pack from 2x FP64, lowest 4 entries
+                  decoded_instruction.op  = ariane_pkg::VFCPKAB_D; // vfcpka/b.vfmt.d - Vectorial FP Cast-and-Pack from 2x FP64, lowest 4 entries
                   imm_select = SIMM;  // rd into result field (upper bits don't matter)
                   if (~CVA6Cfg.RVD)
                     illegal_instr = 1'b1;  // if we don't support RVD, we can't cast from FP64
@@ -743,7 +816,7 @@ module decoder
                   endcase
                 end
                 5'b11011: begin
-                  instruction_o.op  = ariane_pkg::VFCPKCD_D; // vfcpka/b.vfmt.d - Vectorial FP Cast-and-Pack from 2x FP64, second 4 entries
+                  decoded_instruction.op  = ariane_pkg::VFCPKCD_D; // vfcpka/b.vfmt.d - Vectorial FP Cast-and-Pack from 2x FP64, second 4 entries
                   imm_select = SIMM;  // rd into result field (upper bits don't matter)
                   if (~CVA6Cfg.RVD)
                     illegal_instr = 1'b1;  // if we don't support RVD, we can't cast from FP64
@@ -778,8 +851,8 @@ module decoder
 
               // check rounding mode
               if (check_fprm) begin
-                unique case (frm_i) inside  // actual rounding mode from frm csr
-                  [3'b000 : 3'b100]: ;  //legal rounding modes
+                unique case (frm_i)  // actual rounding mode from frm csr
+                  3'b000, 3'b001, 3'b010, 3'b011, 3'b100: ;  //legal rounding modes
                   default: illegal_instr = 1'b1;
                 endcase
               end
@@ -793,39 +866,39 @@ module decoder
             // ---------------------------
           end else begin
             if (CVA6Cfg.RVB) begin
-              instruction_o.fu  = (instr.rtype.funct7 == 7'b000_0001 || ((instr.rtype.funct7 == 7'b000_0101) && !(instr.rtype.funct3[14]))) ? MULT : ALU;
+              decoded_instruction.fu  = (instr.rtype.funct7 == 7'b000_0001 || ((instr.rtype.funct7 == 7'b000_0101) && !(instr.rtype.funct3[14]))) ? MULT : ALU;
             end else begin
-              instruction_o.fu = (instr.rtype.funct7 == 7'b000_0001) ? MULT : ALU;
+              decoded_instruction.fu = (instr.rtype.funct7 == 7'b000_0001) ? MULT : ALU;
             end
-            instruction_o.rs1 = instr.rtype.rs1;
-            instruction_o.rs2 = instr.rtype.rs2;
-            instruction_o.rd  = instr.rtype.rd;
+            decoded_instruction.rs1 = instr.rtype.rs1;
+            decoded_instruction.rs2 = instr.rtype.rs2;
+            decoded_instruction.rd  = instr.rtype.rd;
 
             unique case ({
               instr.rtype.funct7, instr.rtype.funct3
             })
-              {7'b000_0000, 3'b000} : instruction_o.op = ariane_pkg::ADD;  // Add
-              {7'b010_0000, 3'b000} : instruction_o.op = ariane_pkg::SUB;  // Sub
-              {7'b000_0000, 3'b010} : instruction_o.op = ariane_pkg::SLTS;  // Set Lower Than
+              {7'b000_0000, 3'b000} : decoded_instruction.op = ariane_pkg::ADD;  // Add
+              {7'b010_0000, 3'b000} : decoded_instruction.op = ariane_pkg::SUB;  // Sub
+              {7'b000_0000, 3'b010} : decoded_instruction.op = ariane_pkg::SLTS;  // Set Lower Than
               {
                 7'b000_0000, 3'b011
               } :
-              instruction_o.op = ariane_pkg::SLTU;  // Set Lower Than Unsigned
-              {7'b000_0000, 3'b100} : instruction_o.op = ariane_pkg::XORL;  // Xor
-              {7'b000_0000, 3'b110} : instruction_o.op = ariane_pkg::ORL;  // Or
-              {7'b000_0000, 3'b111} : instruction_o.op = ariane_pkg::ANDL;  // And
-              {7'b000_0000, 3'b001} : instruction_o.op = ariane_pkg::SLL;  // Shift Left Logical
-              {7'b000_0000, 3'b101} : instruction_o.op = ariane_pkg::SRL;  // Shift Right Logical
-              {7'b010_0000, 3'b101} : instruction_o.op = ariane_pkg::SRA;  // Shift Right Arithmetic
+              decoded_instruction.op = ariane_pkg::SLTU;  // Set Lower Than Unsigned
+              {7'b000_0000, 3'b100} : decoded_instruction.op = ariane_pkg::XORL;  // Xor
+              {7'b000_0000, 3'b110} : decoded_instruction.op = ariane_pkg::ORL;  // Or
+              {7'b000_0000, 3'b111} : decoded_instruction.op = ariane_pkg::ANDL;  // And
+              {7'b000_0000, 3'b001} : decoded_instruction.op = ariane_pkg::SLL;  // Shift Left Logical
+              {7'b000_0000, 3'b101} : decoded_instruction.op = ariane_pkg::SRL;  // Shift Right Logical
+              {7'b010_0000, 3'b101} : decoded_instruction.op = ariane_pkg::SRA;  // Shift Right Arithmetic
               // Multiplications
-              {7'b000_0001, 3'b000} : instruction_o.op = ariane_pkg::MUL;
-              {7'b000_0001, 3'b001} : instruction_o.op = ariane_pkg::MULH;
-              {7'b000_0001, 3'b010} : instruction_o.op = ariane_pkg::MULHSU;
-              {7'b000_0001, 3'b011} : instruction_o.op = ariane_pkg::MULHU;
-              {7'b000_0001, 3'b100} : instruction_o.op = ariane_pkg::DIV;
-              {7'b000_0001, 3'b101} : instruction_o.op = ariane_pkg::DIVU;
-              {7'b000_0001, 3'b110} : instruction_o.op = ariane_pkg::REM;
-              {7'b000_0001, 3'b111} : instruction_o.op = ariane_pkg::REMU;
+              {7'b000_0001, 3'b000} : decoded_instruction.op = ariane_pkg::MUL;
+              {7'b000_0001, 3'b001} : decoded_instruction.op = ariane_pkg::MULH;
+              {7'b000_0001, 3'b010} : decoded_instruction.op = ariane_pkg::MULHSU;
+              {7'b000_0001, 3'b011} : decoded_instruction.op = ariane_pkg::MULHU;
+              {7'b000_0001, 3'b100} : decoded_instruction.op = ariane_pkg::DIV;
+              {7'b000_0001, 3'b101} : decoded_instruction.op = ariane_pkg::DIVU;
+              {7'b000_0001, 3'b110} : decoded_instruction.op = ariane_pkg::REM;
+              {7'b000_0001, 3'b111} : decoded_instruction.op = ariane_pkg::REMU;
               default: begin
                 illegal_instr_non_bm = 1'b1;
               end
@@ -835,46 +908,46 @@ module decoder
                 instr.rtype.funct7, instr.rtype.funct3
               })
                 //Logical with Negate
-                {7'b010_0000, 3'b111} : instruction_o.op = ariane_pkg::ANDN;  // Andn
-                {7'b010_0000, 3'b110} : instruction_o.op = ariane_pkg::ORN;  // Orn
-                {7'b010_0000, 3'b100} : instruction_o.op = ariane_pkg::XNOR;  // Xnor
+                {7'b010_0000, 3'b111} : decoded_instruction.op = ariane_pkg::ANDN;  // Andn
+                {7'b010_0000, 3'b110} : decoded_instruction.op = ariane_pkg::ORN;  // Orn
+                {7'b010_0000, 3'b100} : decoded_instruction.op = ariane_pkg::XNOR;  // Xnor
                 //Shift and Add (Bitmanip)
-                {7'b001_0000, 3'b010} : instruction_o.op = ariane_pkg::SH1ADD;  // Sh1add
-                {7'b001_0000, 3'b100} : instruction_o.op = ariane_pkg::SH2ADD;  // Sh2add
-                {7'b001_0000, 3'b110} : instruction_o.op = ariane_pkg::SH3ADD;  // Sh3add
+                {7'b001_0000, 3'b010} : decoded_instruction.op = ariane_pkg::SH1ADD;  // Sh1add
+                {7'b001_0000, 3'b100} : decoded_instruction.op = ariane_pkg::SH2ADD;  // Sh2add
+                {7'b001_0000, 3'b110} : decoded_instruction.op = ariane_pkg::SH3ADD;  // Sh3add
                 // Integer maximum/minimum
-                {7'b000_0101, 3'b110} : instruction_o.op = ariane_pkg::MAX;  // max
-                {7'b000_0101, 3'b111} : instruction_o.op = ariane_pkg::MAXU;  // maxu
-                {7'b000_0101, 3'b100} : instruction_o.op = ariane_pkg::MIN;  // min
-                {7'b000_0101, 3'b101} : instruction_o.op = ariane_pkg::MINU;  // minu
+                {7'b000_0101, 3'b110} : decoded_instruction.op = ariane_pkg::MAX;  // max
+                {7'b000_0101, 3'b111} : decoded_instruction.op = ariane_pkg::MAXU;  // maxu
+                {7'b000_0101, 3'b100} : decoded_instruction.op = ariane_pkg::MIN;  // min
+                {7'b000_0101, 3'b101} : decoded_instruction.op = ariane_pkg::MINU;  // minu
                 // Single bit instructions
-                {7'b010_0100, 3'b001} : instruction_o.op = ariane_pkg::BCLR;  // bclr
-                {7'b010_0100, 3'b101} : instruction_o.op = ariane_pkg::BEXT;  // bext
-                {7'b011_0100, 3'b001} : instruction_o.op = ariane_pkg::BINV;  // binv
-                {7'b001_0100, 3'b001} : instruction_o.op = ariane_pkg::BSET;  // bset
+                {7'b010_0100, 3'b001} : decoded_instruction.op = ariane_pkg::BCLR;  // bclr
+                {7'b010_0100, 3'b101} : decoded_instruction.op = ariane_pkg::BEXT;  // bext
+                {7'b011_0100, 3'b001} : decoded_instruction.op = ariane_pkg::BINV;  // binv
+                {7'b001_0100, 3'b001} : decoded_instruction.op = ariane_pkg::BSET;  // bset
                 // Carry-Less-Multiplication (clmul, clmulh, clmulr)
-                {7'b000_0101, 3'b001} : instruction_o.op = ariane_pkg::CLMUL;  // clmul
-                {7'b000_0101, 3'b011} : instruction_o.op = ariane_pkg::CLMULH;  // clmulh
-                {7'b000_0101, 3'b010} : instruction_o.op = ariane_pkg::CLMULR;  // clmulr
+                {7'b000_0101, 3'b001} : decoded_instruction.op = ariane_pkg::CLMUL;  // clmul
+                {7'b000_0101, 3'b011} : decoded_instruction.op = ariane_pkg::CLMULH;  // clmulh
+                {7'b000_0101, 3'b010} : decoded_instruction.op = ariane_pkg::CLMULR;  // clmulr
                 // Bitwise Shifting
-                {7'b011_0000, 3'b001} : instruction_o.op = ariane_pkg::ROL;  // rol
-                {7'b011_0000, 3'b101} : instruction_o.op = ariane_pkg::ROR;  // ror
+                {7'b011_0000, 3'b001} : decoded_instruction.op = ariane_pkg::ROL;  // rol
+                {7'b011_0000, 3'b101} : decoded_instruction.op = ariane_pkg::ROR;  // ror
                 {
                   7'b000_0100, 3'b111
                 } : begin
-                  if (CVA6Cfg.ZKN) instruction_o.op = ariane_pkg::PACK_H;  //packh
+                  if (CVA6Cfg.ZKN) decoded_instruction.op = ariane_pkg::PACK_H;  //packh
                   else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b001_0100, 3'b100
                 } : begin
-                  if (CVA6Cfg.ZKN) instruction_o.op = ariane_pkg::XPERM8;  // xperm8
+                  if (CVA6Cfg.ZKN) decoded_instruction.op = ariane_pkg::XPERM8;  // xperm8
                   else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b001_0100, 3'b010
                 } : begin
-                  if (CVA6Cfg.ZKN) instruction_o.op = ariane_pkg::XPERM4;  // xperm4
+                  if (CVA6Cfg.ZKN) decoded_instruction.op = ariane_pkg::XPERM4;  // xperm4
                   else illegal_instr_bm = 1'b1;
                 end
                 // Zero Extend Op RV32 encoding
@@ -882,32 +955,32 @@ module decoder
                   7'b000_0100, 3'b100
                 } : begin
                   if (!CVA6Cfg.IS_XLEN64 && instr.instr[24:20] == 5'b00000)
-                    instruction_o.op = ariane_pkg::ZEXTH;  // Zero Extend Op RV32 encoding
-                  else if (CVA6Cfg.ZKN) instruction_o.op = ariane_pkg::PACK;  // pack
+                    decoded_instruction.op = ariane_pkg::ZEXTH;  // Zero Extend Op RV32 encoding
+                  else if (CVA6Cfg.ZKN) decoded_instruction.op = ariane_pkg::PACK;  // pack
                   else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b001_1001, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES64ES;  // aes64es
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES64ES;  // aes64es
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b001_1011, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES64ESM;  // aes64esm
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES64ESM;  // aes64esm
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b011_1111, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES64KS2;  // aes64ks2
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES64KS2;  // aes64ks2
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
@@ -920,8 +993,8 @@ module decoder
                   7'b1110001, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES32ESI;  // aes32esi
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES32ESI;  // aes32esi
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
@@ -934,8 +1007,8 @@ module decoder
                   7'b1110011, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES32ESMI;  // aes32esmi
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES32ESMI;  // aes32esmi
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
@@ -948,8 +1021,8 @@ module decoder
                   7'b1110101, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES32DSI;  // aes32dsi
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES32DSI;  // aes32dsi
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
@@ -962,72 +1035,72 @@ module decoder
                   7'b1110111, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES32DSMI;  // aes32dsmi
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES32DSMI;  // aes32dsmi
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b001_1101, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES64DS;  // aes64ds
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES64DS;  // aes64ds
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b001_1111, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::AES64DSM;  // aes64dsm
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::AES64DSM;  // aes64dsm
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b010_1110, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::SHA512SIG0H;  // sha512sig0h
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::SHA512SIG0H;  // sha512sig0h
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b010_1010, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::SHA512SIG0L;  // sha512sig0l
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::SHA512SIG0L;  // sha512sig0l
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b010_1111, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::SHA512SIG1H;  // sha512sig1h
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::SHA512SIG1H;  // sha512sig1h
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b010_1011, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::SHA512SIG1L;  // sha512sig1l
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::SHA512SIG1L;  // sha512sig1l
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b010_1000, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::SHA512SUM0R;  // sha512sum0r
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::SHA512SUM0R;  // sha512sum0r
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 {
                   7'b010_1001, 3'b000
                 } : begin
                   if (CVA6Cfg.ZKN) begin
-                    instruction_o.op = ariane_pkg::SHA512SUM1R;  // sha512sum1r
-                    instruction_o.fu = AES;
+                    decoded_instruction.op = ariane_pkg::SHA512SUM1R;  // sha512sum1r
+                    decoded_instruction.fu = AES;
                   end else illegal_instr_bm = 1'b1;
                 end
                 default: begin
@@ -1040,8 +1113,8 @@ module decoder
                 instr.rtype.funct7, instr.rtype.funct3
               })
                 //Conditional move
-                {7'b000_0111, 3'b101} : instruction_o.op = ariane_pkg::CZERO_EQZ;  // czero.eqz
-                {7'b000_0111, 3'b111} : instruction_o.op = ariane_pkg::CZERO_NEZ;  // czero.nez
+                {7'b000_0111, 3'b101} : decoded_instruction.op = ariane_pkg::CZERO_EQZ;  // czero.eqz
+                {7'b000_0111, 3'b111} : decoded_instruction.op = ariane_pkg::CZERO_NEZ;  // czero.nez
                 default: begin
                   illegal_instr_zic = 1'b1;
                 end
@@ -1064,25 +1137,25 @@ module decoder
         // 32bit Reg-Reg Operations
         // --------------------------
         riscv::OpcodeOp32: begin
-          instruction_o.fu  = (instr.rtype.funct7 == 7'b000_0001) ? MULT : ALU;
-          instruction_o.rs1 = instr.rtype.rs1;
-          instruction_o.rs2 = instr.rtype.rs2;
-          instruction_o.rd  = instr.rtype.rd;
+          decoded_instruction.fu  = (instr.rtype.funct7 == 7'b000_0001) ? MULT : ALU;
+          decoded_instruction.rs1 = instr.rtype.rs1;
+          decoded_instruction.rs2 = instr.rtype.rs2;
+          decoded_instruction.rd  = instr.rtype.rd;
           if (CVA6Cfg.IS_XLEN64) begin
             unique case ({
               instr.rtype.funct7, instr.rtype.funct3
             })
-              {7'b000_0000, 3'b000} : instruction_o.op = ariane_pkg::ADDW;  // addw
-              {7'b010_0000, 3'b000} : instruction_o.op = ariane_pkg::SUBW;  // subw
-              {7'b000_0000, 3'b001} : instruction_o.op = ariane_pkg::SLLW;  // sllw
-              {7'b000_0000, 3'b101} : instruction_o.op = ariane_pkg::SRLW;  // srlw
-              {7'b010_0000, 3'b101} : instruction_o.op = ariane_pkg::SRAW;  // sraw
+              {7'b000_0000, 3'b000} : decoded_instruction.op = ariane_pkg::ADDW;  // addw
+              {7'b010_0000, 3'b000} : decoded_instruction.op = ariane_pkg::SUBW;  // subw
+              {7'b000_0000, 3'b001} : decoded_instruction.op = ariane_pkg::SLLW;  // sllw
+              {7'b000_0000, 3'b101} : decoded_instruction.op = ariane_pkg::SRLW;  // srlw
+              {7'b010_0000, 3'b101} : decoded_instruction.op = ariane_pkg::SRAW;  // sraw
               // Multiplications
-              {7'b000_0001, 3'b000} : instruction_o.op = ariane_pkg::MULW;
-              {7'b000_0001, 3'b100} : instruction_o.op = ariane_pkg::DIVW;
-              {7'b000_0001, 3'b101} : instruction_o.op = ariane_pkg::DIVUW;
-              {7'b000_0001, 3'b110} : instruction_o.op = ariane_pkg::REMW;
-              {7'b000_0001, 3'b111} : instruction_o.op = ariane_pkg::REMUW;
+              {7'b000_0001, 3'b000} : decoded_instruction.op = ariane_pkg::MULW;
+              {7'b000_0001, 3'b100} : decoded_instruction.op = ariane_pkg::DIVW;
+              {7'b000_0001, 3'b101} : decoded_instruction.op = ariane_pkg::DIVUW;
+              {7'b000_0001, 3'b110} : decoded_instruction.op = ariane_pkg::REMW;
+              {7'b000_0001, 3'b111} : decoded_instruction.op = ariane_pkg::REMUW;
               default: illegal_instr_non_bm = 1'b1;
             endcase
             if (CVA6Cfg.RVB) begin
@@ -1090,20 +1163,20 @@ module decoder
                 instr.rtype.funct7, instr.rtype.funct3
               })
                 // Shift with Add (Unsigned Word)
-                {7'b001_0000, 3'b010} : instruction_o.op = ariane_pkg::SH1ADDUW;  // sh1add.uw
-                {7'b001_0000, 3'b100} : instruction_o.op = ariane_pkg::SH2ADDUW;  // sh2add.uw
-                {7'b001_0000, 3'b110} : instruction_o.op = ariane_pkg::SH3ADDUW;  // sh3add.uw
+                {7'b001_0000, 3'b010} : decoded_instruction.op = ariane_pkg::SH1ADDUW;  // sh1add.uw
+                {7'b001_0000, 3'b100} : decoded_instruction.op = ariane_pkg::SH2ADDUW;  // sh2add.uw
+                {7'b001_0000, 3'b110} : decoded_instruction.op = ariane_pkg::SH3ADDUW;  // sh3add.uw
                 // Unsigned word Op's
-                {7'b000_0100, 3'b000} : instruction_o.op = ariane_pkg::ADDUW;  // add.uw
+                {7'b000_0100, 3'b000} : decoded_instruction.op = ariane_pkg::ADDUW;  // add.uw
                 // Bitwise Shifting
-                {7'b011_0000, 3'b001} : instruction_o.op = ariane_pkg::ROLW;  // rolw
-                {7'b011_0000, 3'b101} : instruction_o.op = ariane_pkg::RORW;  // rorw
+                {7'b011_0000, 3'b001} : decoded_instruction.op = ariane_pkg::ROLW;  // rolw
+                {7'b011_0000, 3'b101} : decoded_instruction.op = ariane_pkg::RORW;  // rorw
                 {
                   7'b000_0100, 3'b100
                 } : begin
                   if (instr.instr[24:20] == 5'b00000)
-                    instruction_o.op = ariane_pkg::ZEXTH;  // Zero Extend Op RV64 encoding
-                  else if (CVA6Cfg.ZKN) instruction_o.op = ariane_pkg::PACK_W;  // packw
+                    decoded_instruction.op = ariane_pkg::ZEXTH;  // Zero Extend Op RV64 encoding
+                  else if (CVA6Cfg.ZKN) decoded_instruction.op = ariane_pkg::PACK_W;  // packw
                   else illegal_instr_bm = 1'b1;
                 end
                 default: illegal_instr_bm = 1'b1;
@@ -1118,30 +1191,30 @@ module decoder
         // Reg-Immediate Operations
         // --------------------------------
         riscv::OpcodeOpImm: begin
-          instruction_o.fu = ALU;
+          decoded_instruction.fu = ALU;
           imm_select = IIMM;
-          instruction_o.rs1 = instr.itype.rs1;
-          instruction_o.rd = instr.itype.rd;
+          decoded_instruction.rs1 = instr.itype.rs1;
+          decoded_instruction.rd = instr.itype.rd;
           unique case (instr.itype.funct3)
-            3'b000: instruction_o.op = ariane_pkg::ADD;  // Add Immediate
-            3'b010: instruction_o.op = ariane_pkg::SLTS;  // Set to one if Lower Than Immediate
+            3'b000: decoded_instruction.op = ariane_pkg::ADD;  // Add Immediate
+            3'b010: decoded_instruction.op = ariane_pkg::SLTS;  // Set to one if Lower Than Immediate
             3'b011:
-            instruction_o.op = ariane_pkg::SLTU;  // Set to one if Lower Than Immediate Unsigned
-            3'b100: instruction_o.op = ariane_pkg::XORL;  // Exclusive Or with Immediate
-            3'b110: instruction_o.op = ariane_pkg::ORL;  // Or with Immediate
-            3'b111: instruction_o.op = ariane_pkg::ANDL;  // And with Immediate
+            decoded_instruction.op = ariane_pkg::SLTU;  // Set to one if Lower Than Immediate Unsigned
+            3'b100: decoded_instruction.op = ariane_pkg::XORL;  // Exclusive Or with Immediate
+            3'b110: decoded_instruction.op = ariane_pkg::ORL;  // Or with Immediate
+            3'b111: decoded_instruction.op = ariane_pkg::ANDL;  // And with Immediate
 
             3'b001: begin
-              instruction_o.op = ariane_pkg::SLL;  // Shift Left Logical by Immediate
+              decoded_instruction.op = ariane_pkg::SLL;  // Shift Left Logical by Immediate
               if (instr.instr[31:26] != 6'b0) illegal_instr_non_bm = 1'b1;
               if (instr.instr[25] != 1'b0 && CVA6Cfg.XLEN == 32) illegal_instr_non_bm = 1'b1;
             end
 
             3'b101: begin
               if (instr.instr[31:26] == 6'b0)
-                instruction_o.op = ariane_pkg::SRL;  // Shift Right Logical by Immediate
+                decoded_instruction.op = ariane_pkg::SRL;  // Shift Right Logical by Immediate
               else if (instr.instr[31:26] == 6'b010_000)
-                instruction_o.op = ariane_pkg::SRA;  // Shift Right Arithmetically by Immediate
+                decoded_instruction.op = ariane_pkg::SRA;  // Shift Right Arithmetically by Immediate
               else illegal_instr_non_bm = 1'b1;
               if (instr.instr[25] != 1'b0 && CVA6Cfg.XLEN == 32) illegal_instr_non_bm = 1'b1;
             end
@@ -1150,76 +1223,76 @@ module decoder
             unique case (instr.itype.funct3)
               3'b001: begin
                 if (instr.instr[31:25] == 7'b0110000) begin
-                  if (instr.instr[24:20] == 5'b00100) instruction_o.op = ariane_pkg::SEXTB;
-                  else if (instr.instr[24:20] == 5'b00101) instruction_o.op = ariane_pkg::SEXTH;
-                  else if (instr.instr[24:20] == 5'b00010) instruction_o.op = ariane_pkg::CPOP;
-                  else if (instr.instr[24:20] == 5'b00000) instruction_o.op = ariane_pkg::CLZ;
-                  else if (instr.instr[24:20] == 5'b00001) instruction_o.op = ariane_pkg::CTZ;
+                  if (instr.instr[24:20] == 5'b00100) decoded_instruction.op = ariane_pkg::SEXTB;
+                  else if (instr.instr[24:20] == 5'b00101) decoded_instruction.op = ariane_pkg::SEXTH;
+                  else if (instr.instr[24:20] == 5'b00010) decoded_instruction.op = ariane_pkg::CPOP;
+                  else if (instr.instr[24:20] == 5'b00000) decoded_instruction.op = ariane_pkg::CLZ;
+                  else if (instr.instr[24:20] == 5'b00001) decoded_instruction.op = ariane_pkg::CTZ;
                   else illegal_instr_bm = 1'b1;
                 end else if (CVA6Cfg.IS_XLEN64 && instr.instr[31:26] == 6'b010010)
-                  instruction_o.op = ariane_pkg::BCLRI;
+                  decoded_instruction.op = ariane_pkg::BCLRI;
                 else if (CVA6Cfg.IS_XLEN32 && instr.instr[31:25] == 7'b0100100)
-                  instruction_o.op = ariane_pkg::BCLRI;
+                  decoded_instruction.op = ariane_pkg::BCLRI;
                 else if (CVA6Cfg.IS_XLEN64 && instr.instr[31:26] == 6'b011010)
-                  instruction_o.op = ariane_pkg::BINVI;
+                  decoded_instruction.op = ariane_pkg::BINVI;
                 else if (CVA6Cfg.IS_XLEN32 && instr.instr[31:25] == 7'b0110100)
-                  instruction_o.op = ariane_pkg::BINVI;
+                  decoded_instruction.op = ariane_pkg::BINVI;
                 else if (CVA6Cfg.IS_XLEN64 && instr.instr[31:26] == 6'b001010)
-                  instruction_o.op = ariane_pkg::BSETI;
+                  decoded_instruction.op = ariane_pkg::BSETI;
                 else if (CVA6Cfg.IS_XLEN32 && instr.instr[31:25] == 7'b0010100)
-                  instruction_o.op = ariane_pkg::BSETI;
+                  decoded_instruction.op = ariane_pkg::BSETI;
                 else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000010001111)
-                  instruction_o.op = ariane_pkg::ZIP;
+                  decoded_instruction.op = ariane_pkg::ZIP;
                 else if (CVA6Cfg.ZKN && instr.instr[31:24] == 8'b00110001) begin
-                  instruction_o.op = ariane_pkg::AES64KS1I;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::AES64KS1I;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b001100000000) begin
-                  instruction_o.op = ariane_pkg::AES64IM;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::AES64IM;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000010) begin
-                  instruction_o.op = ariane_pkg::SHA256SIG0;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA256SIG0;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000011) begin
-                  instruction_o.op = ariane_pkg::SHA256SIG1;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA256SIG1;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000000) begin
-                  instruction_o.op = ariane_pkg::SHA256SUM0;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA256SUM0;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000001) begin
-                  instruction_o.op = ariane_pkg::SHA256SUM1;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA256SUM1;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000110) begin
-                  instruction_o.op = ariane_pkg::SHA512SIG0;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA512SIG0;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000111) begin
-                  instruction_o.op = ariane_pkg::SHA512SIG1;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA512SIG1;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000100) begin
-                  instruction_o.op = ariane_pkg::SHA512SUM0;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA512SUM0;
+                  decoded_instruction.fu = AES;
                 end else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000100000101) begin
-                  instruction_o.op = ariane_pkg::SHA512SUM1;
-                  instruction_o.fu = AES;
+                  decoded_instruction.op = ariane_pkg::SHA512SUM1;
+                  decoded_instruction.fu = AES;
                 end else illegal_instr_bm = 1'b1;
               end
               3'b101: begin
-                if (instr.instr[31:20] == 12'b001010000111) instruction_o.op = ariane_pkg::ORCB;
+                if (instr.instr[31:20] == 12'b001010000111) decoded_instruction.op = ariane_pkg::ORCB;
                 else if (CVA6Cfg.IS_XLEN64 && instr.instr[31:20] == 12'b011010111000)
-                  instruction_o.op = ariane_pkg::REV8;
+                  decoded_instruction.op = ariane_pkg::REV8;
                 else if (instr.instr[31:20] == 12'b011010011000)
-                  instruction_o.op = ariane_pkg::REV8;
+                  decoded_instruction.op = ariane_pkg::REV8;
                 else if (CVA6Cfg.IS_XLEN64 && instr.instr[31:26] == 6'b010_010)
-                  instruction_o.op = ariane_pkg::BEXTI;
+                  decoded_instruction.op = ariane_pkg::BEXTI;
                 else if (CVA6Cfg.IS_XLEN32 && instr.instr[31:25] == 7'b010_0100)
-                  instruction_o.op = ariane_pkg::BEXTI;
+                  decoded_instruction.op = ariane_pkg::BEXTI;
                 else if (CVA6Cfg.IS_XLEN64 && instr.instr[31:26] == 6'b011_000)
-                  instruction_o.op = ariane_pkg::RORI;
+                  decoded_instruction.op = ariane_pkg::RORI;
                 else if (CVA6Cfg.IS_XLEN32 && instr.instr[31:25] == 7'b011_0000)
-                  instruction_o.op = ariane_pkg::RORI;
+                  decoded_instruction.op = ariane_pkg::RORI;
                 else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b011010000111)
-                  instruction_o.op = ariane_pkg::BREV8;
+                  decoded_instruction.op = ariane_pkg::BREV8;
                 else if (CVA6Cfg.ZKN && instr.instr[31:20] == 12'b000010001111)
-                  instruction_o.op = ariane_pkg::UNZIP;
+                  decoded_instruction.op = ariane_pkg::UNZIP;
                 else illegal_instr_bm = 1'b1;
               end
               default: illegal_instr_bm = 1'b1;
@@ -1234,22 +1307,22 @@ module decoder
         // 32 bit Reg-Immediate Operations
         // --------------------------------
         riscv::OpcodeOpImm32: begin
-          instruction_o.fu = ALU;
+          decoded_instruction.fu = ALU;
           imm_select = IIMM;
-          instruction_o.rs1 = instr.itype.rs1;
-          instruction_o.rd = instr.itype.rd;
+          decoded_instruction.rs1 = instr.itype.rs1;
+          decoded_instruction.rd = instr.itype.rd;
           if (CVA6Cfg.IS_XLEN64) begin
             unique case (instr.itype.funct3)
-              3'b000:  instruction_o.op = ariane_pkg::ADDW;  // Add Immediate
+              3'b000:  decoded_instruction.op = ariane_pkg::ADDW;  // Add Immediate
               3'b001: begin
-                instruction_o.op = ariane_pkg::SLLW;  // Shift Left Logical by Immediate
+                decoded_instruction.op = ariane_pkg::SLLW;  // Shift Left Logical by Immediate
                 if (instr.instr[31:25] != 7'b0) illegal_instr_non_bm = 1'b1;
               end
               3'b101: begin
                 if (instr.instr[31:25] == 7'b0)
-                  instruction_o.op = ariane_pkg::SRLW;  // Shift Right Logical by Immediate
+                  decoded_instruction.op = ariane_pkg::SRLW;  // Shift Right Logical by Immediate
                 else if (instr.instr[31:25] == 7'b010_0000)
-                  instruction_o.op = ariane_pkg::SRAW;  // Shift Right Arithmetically by Immediate
+                  decoded_instruction.op = ariane_pkg::SRAW;  // Shift Right Arithmetically by Immediate
                 else illegal_instr_non_bm = 1'b1;
               end
               default: illegal_instr_non_bm = 1'b1;
@@ -1258,16 +1331,16 @@ module decoder
               unique case (instr.itype.funct3)
                 3'b001: begin
                   if (instr.instr[31:25] == 7'b0110000) begin
-                    if (instr.instr[24:20] == 5'b00010) instruction_o.op = ariane_pkg::CPOPW;
-                    else if (instr.instr[24:20] == 5'b00000) instruction_o.op = ariane_pkg::CLZW;
-                    else if (instr.instr[24:20] == 5'b00001) instruction_o.op = ariane_pkg::CTZW;
+                    if (instr.instr[24:20] == 5'b00010) decoded_instruction.op = ariane_pkg::CPOPW;
+                    else if (instr.instr[24:20] == 5'b00000) decoded_instruction.op = ariane_pkg::CLZW;
+                    else if (instr.instr[24:20] == 5'b00001) decoded_instruction.op = ariane_pkg::CTZW;
                     else illegal_instr_bm = 1'b1;
                   end else if (instr.instr[31:26] == 6'b000010) begin
-                    instruction_o.op = ariane_pkg::SLLIUW; // Shift Left Logic by Immediate (Unsigned Word)
+                    decoded_instruction.op = ariane_pkg::SLLIUW; // Shift Left Logic by Immediate (Unsigned Word)
                   end else illegal_instr_bm = 1'b1;
                 end
                 3'b101: begin
-                  if (instr.instr[31:25] == 7'b011_0000) instruction_o.op = ariane_pkg::RORIW;
+                  if (instr.instr[31:25] == 7'b011_0000) decoded_instruction.op = ariane_pkg::RORIW;
                   else illegal_instr_bm = 1'b1;
                 end
                 default: illegal_instr_bm = 1'b1;
@@ -1283,17 +1356,17 @@ module decoder
         // LSU
         // --------------------------------
         riscv::OpcodeStore: begin
-          instruction_o.fu = STORE;
+          decoded_instruction.fu = STORE;
           imm_select = SIMM;
-          instruction_o.rs1 = instr.stype.rs1;
-          instruction_o.rs2 = instr.stype.rs2;
+          decoded_instruction.rs1 = instr.stype.rs1;
+          decoded_instruction.rs2 = instr.stype.rs2;
           // determine store size
           unique case (instr.stype.funct3)
-            3'b000: instruction_o.op = ariane_pkg::SB;
-            3'b001: instruction_o.op = ariane_pkg::SH;
-            3'b010: instruction_o.op = ariane_pkg::SW;
+            3'b000: decoded_instruction.op = ariane_pkg::SB;
+            3'b001: decoded_instruction.op = ariane_pkg::SH;
+            3'b010: decoded_instruction.op = ariane_pkg::SW;
             3'b011:
-            if (CVA6Cfg.XLEN == 64) instruction_o.op = ariane_pkg::SD;
+            if (CVA6Cfg.XLEN == 64) decoded_instruction.op = ariane_pkg::SD;
             else illegal_instr = 1'b1;
             default: illegal_instr = 1'b1;
           endcase
@@ -1304,22 +1377,22 @@ module decoder
         end
 
         riscv::OpcodeLoad: begin
-          instruction_o.fu = LOAD;
+          decoded_instruction.fu = LOAD;
           imm_select = IIMM;
-          instruction_o.rs1 = instr.itype.rs1;
-          instruction_o.rd = instr.itype.rd;
+          decoded_instruction.rs1 = instr.itype.rs1;
+          decoded_instruction.rd = instr.itype.rd;
           // determine load size and signed type
           unique case (instr.itype.funct3)
-            3'b000: instruction_o.op = ariane_pkg::LB;
-            3'b001: instruction_o.op = ariane_pkg::LH;
-            3'b010: instruction_o.op = ariane_pkg::LW;
-            3'b100: instruction_o.op = ariane_pkg::LBU;
-            3'b101: instruction_o.op = ariane_pkg::LHU;
+            3'b000: decoded_instruction.op = ariane_pkg::LB;
+            3'b001: decoded_instruction.op = ariane_pkg::LH;
+            3'b010: decoded_instruction.op = ariane_pkg::LW;
+            3'b100: decoded_instruction.op = ariane_pkg::LBU;
+            3'b101: decoded_instruction.op = ariane_pkg::LHU;
             3'b110:
-            if (CVA6Cfg.XLEN == 64) instruction_o.op = ariane_pkg::LWU;
+            if (CVA6Cfg.XLEN == 64) decoded_instruction.op = ariane_pkg::LWU;
             else illegal_instr = 1'b1;
             3'b011:
-            if (CVA6Cfg.XLEN == 64) instruction_o.op = ariane_pkg::LD;
+            if (CVA6Cfg.XLEN == 64) decoded_instruction.op = ariane_pkg::LD;
             else illegal_instr = 1'b1;
             default: illegal_instr = 1'b1;
           endcase
@@ -1334,24 +1407,24 @@ module decoder
         // --------------------------------
         riscv::OpcodeStoreFp: begin
           if (CVA6Cfg.FpPresent && fs_i != riscv::Off && ((CVA6Cfg.RVH && (!v_i || vfs_i != riscv::Off)) || !CVA6Cfg.RVH)) begin // only generate decoder if FP extensions are enabled (static)
-            instruction_o.fu = STORE;
+            decoded_instruction.fu = STORE;
             imm_select = SIMM;
-            instruction_o.rs1 = instr.stype.rs1;
-            instruction_o.rs2 = instr.stype.rs2;
+            decoded_instruction.rs1 = instr.stype.rs1;
+            decoded_instruction.rs2 = instr.stype.rs2;
             // determine store size
             unique case (instr.stype.funct3)
               // Only process instruction if corresponding extension is active (static)
               3'b000:
-              if (CVA6Cfg.XF8) instruction_o.op = ariane_pkg::FSB;
+              if (CVA6Cfg.XF8) decoded_instruction.op = ariane_pkg::FSB;
               else illegal_instr = 1'b1;
               3'b001:
-              if (CVA6Cfg.XF16 | CVA6Cfg.XF16ALT) instruction_o.op = ariane_pkg::FSH;
+              if (CVA6Cfg.XF16 | CVA6Cfg.XF16ALT) decoded_instruction.op = ariane_pkg::FSH;
               else illegal_instr = 1'b1;
               3'b010:
-              if (CVA6Cfg.RVF) instruction_o.op = ariane_pkg::FSW;
+              if (CVA6Cfg.RVF) decoded_instruction.op = ariane_pkg::FSW;
               else illegal_instr = 1'b1;
               3'b011:
-              if (CVA6Cfg.RVD) instruction_o.op = ariane_pkg::FSD;
+              if (CVA6Cfg.RVD) decoded_instruction.op = ariane_pkg::FSD;
               else illegal_instr = 1'b1;
               default: illegal_instr = 1'b1;
             endcase
@@ -1364,24 +1437,24 @@ module decoder
 
         riscv::OpcodeLoadFp: begin
           if (CVA6Cfg.FpPresent && fs_i != riscv::Off && ((CVA6Cfg.RVH && (!v_i || vfs_i != riscv::Off)) || !CVA6Cfg.RVH)) begin // only generate decoder if FP extensions are enabled (static)
-            instruction_o.fu = LOAD;
+            decoded_instruction.fu = LOAD;
             imm_select = IIMM;
-            instruction_o.rs1 = instr.itype.rs1;
-            instruction_o.rd = instr.itype.rd;
+            decoded_instruction.rs1 = instr.itype.rs1;
+            decoded_instruction.rd = instr.itype.rd;
             // determine load size
             unique case (instr.itype.funct3)
               // Only process instruction if corresponding extension is active (static)
               3'b000:
-              if (CVA6Cfg.XF8) instruction_o.op = ariane_pkg::FLB;
+              if (CVA6Cfg.XF8) decoded_instruction.op = ariane_pkg::FLB;
               else illegal_instr = 1'b1;
               3'b001:
-              if (CVA6Cfg.XF16 | CVA6Cfg.XF16ALT) instruction_o.op = ariane_pkg::FLH;
+              if (CVA6Cfg.XF16 | CVA6Cfg.XF16ALT) decoded_instruction.op = ariane_pkg::FLH;
               else illegal_instr = 1'b1;
               3'b010:
-              if (CVA6Cfg.RVF) instruction_o.op = ariane_pkg::FLW;
+              if (CVA6Cfg.RVF) decoded_instruction.op = ariane_pkg::FLW;
               else illegal_instr = 1'b1;
               3'b011:
-              if (CVA6Cfg.RVD) instruction_o.op = ariane_pkg::FLD;
+              if (CVA6Cfg.RVD) decoded_instruction.op = ariane_pkg::FLD;
               else illegal_instr = 1'b1;
               default: illegal_instr = 1'b1;
             endcase
@@ -1397,21 +1470,21 @@ module decoder
         // ----------------------------------
         riscv::OpcodeMadd, riscv::OpcodeMsub, riscv::OpcodeNmsub, riscv::OpcodeNmadd: begin
           if (CVA6Cfg.FpPresent && fs_i != riscv::Off && ((CVA6Cfg.RVH && (!v_i || vfs_i != riscv::Off)) || !CVA6Cfg.RVH)) begin // only generate decoder if FP extensions are enabled (static)
-            instruction_o.fu  = FPU;
-            instruction_o.rs1 = instr.r4type.rs1;
-            instruction_o.rs2 = instr.r4type.rs2;
-            instruction_o.rd  = instr.r4type.rd;
+            decoded_instruction.fu  = FPU;
+            decoded_instruction.rs1 = instr.r4type.rs1;
+            decoded_instruction.rs2 = instr.r4type.rs2;
+            decoded_instruction.rd  = instr.r4type.rd;
             imm_select        = RS3;  // rs3 into result field
             check_fprm        = 1'b1;
             // select the correct fused operation
             unique case (instr.r4type.opcode)
-              default: instruction_o.op = ariane_pkg::FMADD;  // fmadd.fmt - FP Fused multiply-add
+              default: decoded_instruction.op = ariane_pkg::FMADD;  // fmadd.fmt - FP Fused multiply-add
               riscv::OpcodeMsub:
-              instruction_o.op = ariane_pkg::FMSUB;  // fmsub.fmt - FP Fused multiply-subtract
+              decoded_instruction.op = ariane_pkg::FMSUB;  // fmsub.fmt - FP Fused multiply-subtract
               riscv::OpcodeNmsub:
-              instruction_o.op = ariane_pkg::FNMSUB; // fnmsub.fmt - FP Negated fused multiply-subtract
+              decoded_instruction.op = ariane_pkg::FNMSUB; // fnmsub.fmt - FP Negated fused multiply-subtract
               riscv::OpcodeNmadd:
-              instruction_o.op = ariane_pkg::FNMADD;  // fnmadd.fmt - FP Negated fused multiply-add
+              decoded_instruction.op = ariane_pkg::FNMADD;  // fnmadd.fmt - FP Negated fused multiply-add
             endcase
 
             // determine fp format
@@ -1426,21 +1499,15 @@ module decoder
 
             // check rounding mode
             if (check_fprm) begin
-              unique case (instr.rftype.rm) inside
-                [3'b000 : 3'b100]: ;  //legal rounding modes
+              unique case (instr.rftype.rm)
+                3'b000, 3'b001, 3'b010, 3'b011, 3'b100: ;  //legal rounding modes
                 3'b101: begin  // Alternative Half-Precision encoded as fmt=10 and rm=101
                   if (~CVA6Cfg.XF16ALT || instr.rftype.fmt != 2'b10) illegal_instr = 1'b1;
-                  unique case (frm_i) inside  // actual rounding mode from frm csr
-                    [3'b000 : 3'b100]: ;  //legal rounding modes
-                    default: illegal_instr = 1'b1;
-                  endcase
+                  if (!is_legal_rounding_mode(frm_i)) illegal_instr = 1'b1;
                 end
                 3'b111: begin
                   // rounding mode from frm csr
-                  unique case (frm_i) inside
-                    [3'b000 : 3'b100]: ;  //legal rounding modes
-                    default: illegal_instr = 1'b1;
-                  endcase
+                  if (!is_legal_rounding_mode(frm_i)) illegal_instr = 1'b1;
                 end
                 default:           illegal_instr = 1'b1;
               endcase
@@ -1452,55 +1519,53 @@ module decoder
 
         riscv::OpcodeOpFp: begin
           if (CVA6Cfg.FpPresent && fs_i != riscv::Off && ((CVA6Cfg.RVH && (!v_i || vfs_i != riscv::Off)) || !CVA6Cfg.RVH)) begin // only generate decoder if FP extensions are enabled (static)
-            instruction_o.fu  = FPU;
-            instruction_o.rs1 = instr.rftype.rs1;
-            instruction_o.rs2 = instr.rftype.rs2;
-            instruction_o.rd  = instr.rftype.rd;
+            decoded_instruction.fu  = FPU;
+            decoded_instruction.rs1 = instr.rftype.rs1;
+            decoded_instruction.rs2 = instr.rftype.rs2;
+            decoded_instruction.rd  = instr.rftype.rd;
             check_fprm        = 1'b1;
             // decode FP instruction
             unique case (instr.rftype.funct5)
               5'b00000: begin
-                instruction_o.op  = ariane_pkg::FADD;  // fadd.fmt - FP Addition
-                instruction_o.rs1 = '0;  // Operand A is set to 0
-                instruction_o.rs2 = instr.rftype.rs1;  // Operand B is set to rs1
+                decoded_instruction.op  = ariane_pkg::FADD;  // fadd.fmt - FP Addition
+                decoded_instruction.rs1 = '0;  // Operand A is set to 0
+                decoded_instruction.rs2 = instr.rftype.rs1;  // Operand B is set to rs1
                 imm_select        = IIMM;  // Operand C is set to rs2
               end
               5'b00001: begin
-                instruction_o.op  = ariane_pkg::FSUB;  // fsub.fmt - FP Subtraction
-                instruction_o.rs1 = '0;  // Operand A is set to 0
-                instruction_o.rs2 = instr.rftype.rs1;  // Operand B is set to rs1
+                decoded_instruction.op  = ariane_pkg::FSUB;  // fsub.fmt - FP Subtraction
+                decoded_instruction.rs1 = '0;  // Operand A is set to 0
+                decoded_instruction.rs2 = instr.rftype.rs1;  // Operand B is set to rs1
                 imm_select        = IIMM;  // Operand C is set to rs2
               end
-              5'b00010: instruction_o.op = ariane_pkg::FMUL;  // fmul.fmt - FP Multiplication
-              5'b00011: instruction_o.op = ariane_pkg::FDIV;  // fdiv.fmt - FP Division
+              5'b00010: decoded_instruction.op = ariane_pkg::FMUL;  // fmul.fmt - FP Multiplication
+              5'b00011: decoded_instruction.op = ariane_pkg::FDIV;  // fdiv.fmt - FP Division
               5'b01011: begin
-                instruction_o.op = ariane_pkg::FSQRT;  // fsqrt.fmt - FP Square Root
+                decoded_instruction.op = ariane_pkg::FSQRT;  // fsqrt.fmt - FP Square Root
                 // rs2 must be zero
                 if (instr.rftype.rs2 != 5'b00000) illegal_instr = 1'b1;
               end
               5'b00100: begin
-                instruction_o.op = ariane_pkg::FSGNJ;  // fsgn{j[n]/jx}.fmt - FP Sign Injection
+                decoded_instruction.op = ariane_pkg::FSGNJ;  // fsgn{j[n]/jx}.fmt - FP Sign Injection
                 check_fprm       = 1'b0;  // instruction encoded in rm, do the check here
                 if (CVA6Cfg.XF16ALT) begin        // FP16ALT instructions encoded in rm separately (static)
-                  if (!(instr.rftype.rm inside {[3'b000 : 3'b010], [3'b100 : 3'b110]}))
-                    illegal_instr = 1'b1;
+                  if (!is_rm_0_to_2_or_4_to_6(instr.rftype.rm)) illegal_instr = 1'b1;
                 end else begin
-                  if (!(instr.rftype.rm inside {[3'b000 : 3'b010]})) illegal_instr = 1'b1;
+                  if (!is_rm_0_to_2(instr.rftype.rm)) illegal_instr = 1'b1;
                 end
               end
               5'b00101: begin
-                instruction_o.op = ariane_pkg::FMIN_MAX;  // fmin/fmax.fmt - FP Minimum / Maximum
+                decoded_instruction.op = ariane_pkg::FMIN_MAX;  // fmin/fmax.fmt - FP Minimum / Maximum
                 check_fprm       = 1'b0;  // instruction encoded in rm, do the check here
                 if (CVA6Cfg.XF16ALT) begin           // FP16ALT instructions encoded in rm separately (static)
-                  if (!(instr.rftype.rm inside {[3'b000 : 3'b001], [3'b100 : 3'b101]}))
-                    illegal_instr = 1'b1;
+                  if (!is_rm_0_to_1_or_4_to_5(instr.rftype.rm)) illegal_instr = 1'b1;
                 end else begin
-                  if (!(instr.rftype.rm inside {[3'b000 : 3'b001]})) illegal_instr = 1'b1;
+                  if (!is_rm_0_to_1(instr.rftype.rm)) illegal_instr = 1'b1;
                 end
               end
               5'b01000: begin
-                instruction_o.op = ariane_pkg::FCVT_F2F;  // fcvt.fmt.fmt - FP to FP Conversion
-                instruction_o.rs2 = instr.rvftype.rs1; // tie rs2 to rs1 to be safe (vectors use rs2)
+                decoded_instruction.op = ariane_pkg::FCVT_F2F;  // fcvt.fmt.fmt - FP to FP Conversion
+                decoded_instruction.rs2 = instr.rvftype.rs1; // tie rs2 to rs1 to be safe (vectors use rs2)
                 imm_select = IIMM;  // rs2 holds part of the instruction
                 if (|instr.rftype.rs2[24:23])
                   illegal_instr = 1'b1;  // bits [22:20] used, other bits must be 0
@@ -1516,41 +1581,40 @@ module decoder
                 endcase
               end
               5'b10100: begin
-                instruction_o.op = ariane_pkg::FCMP;  // feq/flt/fle.fmt - FP Comparisons
+                decoded_instruction.op = ariane_pkg::FCMP;  // feq/flt/fle.fmt - FP Comparisons
                 check_fprm       = 1'b0;  // instruction encoded in rm, do the check here
                 if (CVA6Cfg.XF16ALT) begin       // FP16ALT instructions encoded in rm separately (static)
-                  if (!(instr.rftype.rm inside {[3'b000 : 3'b010], [3'b100 : 3'b110]}))
-                    illegal_instr = 1'b1;
+                  if (!is_rm_0_to_2_or_4_to_6(instr.rftype.rm)) illegal_instr = 1'b1;
                 end else begin
-                  if (!(instr.rftype.rm inside {[3'b000 : 3'b010]})) illegal_instr = 1'b1;
+                  if (!is_rm_0_to_2(instr.rftype.rm)) illegal_instr = 1'b1;
                 end
               end
               5'b11000: begin
-                instruction_o.op = ariane_pkg::FCVT_F2I;  // fcvt.ifmt.fmt - FP to Int Conversion
+                decoded_instruction.op = ariane_pkg::FCVT_F2I;  // fcvt.ifmt.fmt - FP to Int Conversion
                 imm_select       = IIMM;  // rs2 holds part of the instruction
                 if (|instr.rftype.rs2[24:22])
                   illegal_instr = 1'b1;  // bits [21:20] used, other bits must be 0
               end
               5'b11010: begin
-                instruction_o.op = ariane_pkg::FCVT_I2F;  // fcvt.fmt.ifmt - Int to FP Conversion
+                decoded_instruction.op = ariane_pkg::FCVT_I2F;  // fcvt.fmt.ifmt - Int to FP Conversion
                 imm_select       = IIMM;  // rs2 holds part of the instruction
                 if (|instr.rftype.rs2[24:22])
                   illegal_instr = 1'b1;  // bits [21:20] used, other bits must be 0
               end
               5'b11100: begin
-                instruction_o.rs2 = instr.rftype.rs1; // set rs2 = rs1 so we can map FMV to SGNJ in the unit
+                decoded_instruction.rs2 = instr.rftype.rs1; // set rs2 = rs1 so we can map FMV to SGNJ in the unit
                 check_fprm = 1'b0;  // instruction encoded in rm, do the check here
                 if (instr.rftype.rm == 3'b000 || (CVA6Cfg.XF16ALT && instr.rftype.rm == 3'b100)) // FP16ALT has separate encoding
-                  instruction_o.op = ariane_pkg::FMV_F2X;  // fmv.ifmt.fmt - FPR to GPR Move
+                  decoded_instruction.op = ariane_pkg::FMV_F2X;  // fmv.ifmt.fmt - FPR to GPR Move
                 else if (instr.rftype.rm == 3'b001 || (CVA6Cfg.XF16ALT && instr.rftype.rm == 3'b101)) // FP16ALT has separate encoding
-                  instruction_o.op = ariane_pkg::FCLASS;  // fclass.fmt - FP Classify
+                  decoded_instruction.op = ariane_pkg::FCLASS;  // fclass.fmt - FP Classify
                 else illegal_instr = 1'b1;
                 // rs2 must be zero
                 if (instr.rftype.rs2 != 5'b00000) illegal_instr = 1'b1;
               end
               5'b11110: begin
-                instruction_o.op = ariane_pkg::FMV_X2F;  // fmv.fmt.ifmt - GPR to FPR Move
-                instruction_o.rs2 = instr.rftype.rs1; // set rs2 = rs1 so we can map FMV to SGNJ in the unit
+                decoded_instruction.op = ariane_pkg::FMV_X2F;  // fmv.fmt.ifmt - GPR to FPR Move
+                decoded_instruction.rs2 = instr.rftype.rs1; // set rs2 = rs1 so we can map FMV to SGNJ in the unit
                 check_fprm = 1'b0;  // instruction encoded in rm, do the check here
                 if (!(instr.rftype.rm == 3'b000 || (CVA6Cfg.XF16ALT && instr.rftype.rm == 3'b100)))
                   illegal_instr = 1'b1;
@@ -1572,21 +1636,15 @@ module decoder
 
             // check rounding mode
             if (check_fprm) begin
-              unique case (instr.rftype.rm) inside
-                [3'b000 : 3'b100]: ;  //legal rounding modes
+              unique case (instr.rftype.rm)
+                3'b000, 3'b001, 3'b010, 3'b011, 3'b100: ;  //legal rounding modes
                 3'b101: begin  // Alternative Half-Precision encoded as fmt=10 and rm=101
                   if (~CVA6Cfg.XF16ALT || instr.rftype.fmt != 2'b10) illegal_instr = 1'b1;
-                  unique case (frm_i) inside  // actual rounding mode from frm csr
-                    [3'b000 : 3'b100]: ;  //legal rounding modes
-                    default: illegal_instr = 1'b1;
-                  endcase
+                  if (!is_legal_rounding_mode(frm_i)) illegal_instr = 1'b1;
                 end
                 3'b111: begin
                   // rounding mode from frm csr
-                  unique case (frm_i) inside
-                    [3'b000 : 3'b100]: ;  //legal rounding modes
-                    default: illegal_instr = 1'b1;
-                  endcase
+                  if (!is_legal_rounding_mode(frm_i)) illegal_instr = 1'b1;
                 end
                 default:           illegal_instr = 1'b1;
               endcase
@@ -1601,47 +1659,47 @@ module decoder
         // ----------------------------------
         riscv::OpcodeAmo: begin
           // we are going to use the load unit for AMOs
-          instruction_o.fu  = STORE;
-          instruction_o.rs1 = instr.atype.rs1;
-          instruction_o.rs2 = instr.atype.rs2;
-          instruction_o.rd  = instr.atype.rd;
+          decoded_instruction.fu  = STORE;
+          decoded_instruction.rs1 = instr.atype.rs1;
+          decoded_instruction.rs2 = instr.atype.rs2;
+          decoded_instruction.rd  = instr.atype.rd;
           // TODO(zarubaf): Ordering
           // words
           if (CVA6Cfg.RVA && instr.stype.funct3 == 3'h2) begin
             unique case (instr.instr[31:27])
-              5'h0: instruction_o.op = ariane_pkg::AMO_ADDW;
-              5'h1: instruction_o.op = ariane_pkg::AMO_SWAPW;
+              5'h0: decoded_instruction.op = ariane_pkg::AMO_ADDW;
+              5'h1: decoded_instruction.op = ariane_pkg::AMO_SWAPW;
               5'h2: begin
-                instruction_o.op = ariane_pkg::AMO_LRW;
+                decoded_instruction.op = ariane_pkg::AMO_LRW;
                 if (instr.atype.rs2 != 0) illegal_instr = 1'b1;
               end
-              5'h3: instruction_o.op = ariane_pkg::AMO_SCW;
-              5'h4: instruction_o.op = ariane_pkg::AMO_XORW;
-              5'h8: instruction_o.op = ariane_pkg::AMO_ORW;
-              5'hC: instruction_o.op = ariane_pkg::AMO_ANDW;
-              5'h10: instruction_o.op = ariane_pkg::AMO_MINW;
-              5'h14: instruction_o.op = ariane_pkg::AMO_MAXW;
-              5'h18: instruction_o.op = ariane_pkg::AMO_MINWU;
-              5'h1C: instruction_o.op = ariane_pkg::AMO_MAXWU;
+              5'h3: decoded_instruction.op = ariane_pkg::AMO_SCW;
+              5'h4: decoded_instruction.op = ariane_pkg::AMO_XORW;
+              5'h8: decoded_instruction.op = ariane_pkg::AMO_ORW;
+              5'hC: decoded_instruction.op = ariane_pkg::AMO_ANDW;
+              5'h10: decoded_instruction.op = ariane_pkg::AMO_MINW;
+              5'h14: decoded_instruction.op = ariane_pkg::AMO_MAXW;
+              5'h18: decoded_instruction.op = ariane_pkg::AMO_MINWU;
+              5'h1C: decoded_instruction.op = ariane_pkg::AMO_MAXWU;
               default: illegal_instr = 1'b1;
             endcase
             // double words
           end else if (CVA6Cfg.IS_XLEN64 && CVA6Cfg.RVA && instr.stype.funct3 == 3'h3) begin
             unique case (instr.instr[31:27])
-              5'h0: instruction_o.op = ariane_pkg::AMO_ADDD;
-              5'h1: instruction_o.op = ariane_pkg::AMO_SWAPD;
+              5'h0: decoded_instruction.op = ariane_pkg::AMO_ADDD;
+              5'h1: decoded_instruction.op = ariane_pkg::AMO_SWAPD;
               5'h2: begin
-                instruction_o.op = ariane_pkg::AMO_LRD;
+                decoded_instruction.op = ariane_pkg::AMO_LRD;
                 if (instr.atype.rs2 != 0) illegal_instr = 1'b1;
               end
-              5'h3: instruction_o.op = ariane_pkg::AMO_SCD;
-              5'h4: instruction_o.op = ariane_pkg::AMO_XORD;
-              5'h8: instruction_o.op = ariane_pkg::AMO_ORD;
-              5'hC: instruction_o.op = ariane_pkg::AMO_ANDD;
-              5'h10: instruction_o.op = ariane_pkg::AMO_MIND;
-              5'h14: instruction_o.op = ariane_pkg::AMO_MAXD;
-              5'h18: instruction_o.op = ariane_pkg::AMO_MINDU;
-              5'h1C: instruction_o.op = ariane_pkg::AMO_MAXDU;
+              5'h3: decoded_instruction.op = ariane_pkg::AMO_SCD;
+              5'h4: decoded_instruction.op = ariane_pkg::AMO_XORD;
+              5'h8: decoded_instruction.op = ariane_pkg::AMO_ORD;
+              5'hC: decoded_instruction.op = ariane_pkg::AMO_ANDD;
+              5'h10: decoded_instruction.op = ariane_pkg::AMO_MIND;
+              5'h14: decoded_instruction.op = ariane_pkg::AMO_MAXD;
+              5'h18: decoded_instruction.op = ariane_pkg::AMO_MINDU;
+              5'h1C: decoded_instruction.op = ariane_pkg::AMO_MAXDU;
               default: illegal_instr = 1'b1;
             endcase
           end else begin
@@ -1666,19 +1724,19 @@ module decoder
         // --------------------------------
         riscv::OpcodeBranch: begin
           imm_select              = SBIMM;
-          instruction_o.fu        = CTRL_FLOW;
-          instruction_o.rs1       = instr.stype.rs1;
-          instruction_o.rs2       = instr.stype.rs2;
+          decoded_instruction.fu        = CTRL_FLOW;
+          decoded_instruction.rs1       = instr.stype.rs1;
+          decoded_instruction.rs2       = instr.stype.rs2;
 
           is_control_flow_instr_o = 1'b1;
 
           case (instr.stype.funct3)
-            3'b000: instruction_o.op = ariane_pkg::EQ;
-            3'b001: instruction_o.op = ariane_pkg::NE;
-            3'b100: instruction_o.op = ariane_pkg::LTS;
-            3'b101: instruction_o.op = ariane_pkg::GES;
-            3'b110: instruction_o.op = ariane_pkg::LTU;
-            3'b111: instruction_o.op = ariane_pkg::GEU;
+            3'b000: decoded_instruction.op = ariane_pkg::EQ;
+            3'b001: decoded_instruction.op = ariane_pkg::NE;
+            3'b100: decoded_instruction.op = ariane_pkg::LTS;
+            3'b101: decoded_instruction.op = ariane_pkg::GES;
+            3'b110: decoded_instruction.op = ariane_pkg::LTU;
+            3'b111: decoded_instruction.op = ariane_pkg::GEU;
             default: begin
               is_control_flow_instr_o = 1'b0;
               illegal_instr           = 1'b1;
@@ -1687,34 +1745,34 @@ module decoder
         end
         // Jump and link register
         riscv::OpcodeJalr: begin
-          instruction_o.fu        = CTRL_FLOW;
-          instruction_o.op        = ariane_pkg::JALR;
-          instruction_o.rs1       = instr.itype.rs1;
+          decoded_instruction.fu        = CTRL_FLOW;
+          decoded_instruction.op        = ariane_pkg::JALR;
+          decoded_instruction.rs1       = instr.itype.rs1;
           imm_select              = IIMM;
-          instruction_o.rd        = instr.itype.rd;
+          decoded_instruction.rd        = instr.itype.rd;
           is_control_flow_instr_o = 1'b1;
           // invalid jump and link register -> reserved for vector encoding
           if (instr.itype.funct3 != 3'b0) illegal_instr = 1'b1;
         end
         // Jump and link
         riscv::OpcodeJal: begin
-          instruction_o.fu        = CTRL_FLOW;
+          decoded_instruction.fu        = CTRL_FLOW;
           imm_select              = JIMM;
-          instruction_o.rd        = instr.utype.rd;
+          decoded_instruction.rd        = instr.utype.rd;
           is_control_flow_instr_o = 1'b1;
         end
 
         riscv::OpcodeAuipc: begin
-          instruction_o.fu     = ALU;
+          decoded_instruction.fu     = ALU;
           imm_select           = UIMM;
-          instruction_o.use_pc = 1'b1;
-          instruction_o.rd     = instr.utype.rd;
+          decoded_instruction.use_pc = 1'b1;
+          decoded_instruction.rd     = instr.utype.rd;
         end
 
         riscv::OpcodeLui: begin
           imm_select       = UIMM;
-          instruction_o.fu = ALU;
-          instruction_o.rd = instr.utype.rd;
+          decoded_instruction.fu = ALU;
+          decoded_instruction.rd = instr.utype.rd;
         end
 
         default: illegal_instr = 1'b1;
@@ -1722,11 +1780,11 @@ module decoder
     end
     if (CVA6Cfg.CvxifEn) begin
       if (~ex_i.valid && (is_illegal_i || illegal_instr)) begin
-        instruction_o.fu = CVXIF;
-        instruction_o.rs1 = instr.r4type.rs1;
-        instruction_o.rs2 = instr.r4type.rs2;
-        instruction_o.rd = instr.r4type.rd;
-        instruction_o.op = ariane_pkg::OFFLOAD;
+        decoded_instruction.fu = CVXIF;
+        decoded_instruction.rs1 = instr.r4type.rs1;
+        decoded_instruction.rs2 = instr.r4type.rs2;
+        decoded_instruction.rd = instr.r4type.rd;
+        decoded_instruction.op = ariane_pkg::OFFLOAD;
         imm_select             = instr.rtype.opcode == riscv::OpcodeMadd ||
                                  instr.rtype.opcode == riscv::OpcodeMsub ||
                                  instr.rtype.opcode == riscv::OpcodeNmadd ||
@@ -1738,12 +1796,12 @@ module decoder
     // These can overwrite the previous decoding entirely.
     if (CVA6Cfg.EnableAccelerator) begin // only generate decoder if accelerators are enabled (static)
       if (is_accel) begin
-        instruction_o.fu        = acc_instruction.fu;
-        instruction_o.vfp       = acc_instruction.vfp;
-        instruction_o.rs1       = acc_instruction.rs1;
-        instruction_o.rs2       = acc_instruction.rs2;
-        instruction_o.rd        = acc_instruction.rd;
-        instruction_o.op        = acc_instruction.op;
+        decoded_instruction.fu        = acc_instruction.fu;
+        decoded_instruction.vfp       = acc_instruction.vfp;
+        decoded_instruction.rs1       = acc_instruction.rs1;
+        decoded_instruction.rs2       = acc_instruction.rs2;
+        decoded_instruction.rd        = acc_instruction.rd;
+        decoded_instruction.op        = acc_instruction.op;
         illegal_instr           = acc_illegal_instr;
         is_control_flow_instr_o = acc_is_control_flow_instr;
       end
@@ -1786,45 +1844,45 @@ module decoder
     // select immediate
     case (imm_select)
       IIMM: begin
-        instruction_o.result  = imm_i_type;
-        instruction_o.use_imm = 1'b1;
+        instruction_result  = imm_i_type;
+        instruction_use_imm = 1'b1;
       end
       SIMM: begin
-        instruction_o.result  = imm_s_type;
-        instruction_o.use_imm = 1'b1;
+        instruction_result  = imm_s_type;
+        instruction_use_imm = 1'b1;
       end
       SBIMM: begin
-        instruction_o.result  = imm_sb_type;
-        instruction_o.use_imm = 1'b1;
+        instruction_result  = imm_sb_type;
+        instruction_use_imm = 1'b1;
       end
       UIMM: begin
-        instruction_o.result  = imm_u_type;
-        instruction_o.use_imm = 1'b1;
+        instruction_result  = imm_u_type;
+        instruction_use_imm = 1'b1;
       end
       JIMM: begin
-        instruction_o.result  = imm_uj_type;
-        instruction_o.use_imm = 1'b1;
+        instruction_result  = imm_uj_type;
+        instruction_use_imm = 1'b1;
       end
       RS3: begin
         // result holds address of fp operand rs3
-        instruction_o.result  = {{CVA6Cfg.XLEN - 5{1'b0}}, instr.r4type.rs3};
-        instruction_o.use_imm = 1'b0;
+        instruction_result  = {{CVA6Cfg.XLEN - 5{1'b0}}, instr.r4type.rs3};
+        instruction_use_imm = 1'b0;
       end
       MUX_RD_RS3: begin
         // result holds address of operand rs3 which is in rd field
-        instruction_o.result  = {{CVA6Cfg.XLEN - 5{1'b0}}, instr.rtype.rd};
-        instruction_o.use_imm = 1'b0;
+        instruction_result  = {{CVA6Cfg.XLEN - 5{1'b0}}, instr.rtype.rd};
+        instruction_use_imm = 1'b0;
       end
       default: begin
-        instruction_o.result  = {CVA6Cfg.XLEN{1'b0}};
-        instruction_o.use_imm = 1'b0;
+        instruction_result  = {CVA6Cfg.XLEN{1'b0}};
+        instruction_use_imm = 1'b0;
       end
     endcase
 
     if (CVA6Cfg.EnableAccelerator) begin
       if (is_accel) begin
-        instruction_o.result  = acc_instruction.result;
-        instruction_o.use_imm = acc_instruction.use_imm;
+        instruction_result  = acc_instruction.result;
+        instruction_use_imm = acc_instruction.use_imm;
       end
     end
   end
@@ -1834,12 +1892,9 @@ module decoder
   // ---------------------
   logic [CVA6Cfg.XLEN-1:0] interrupt_cause;
 
-  // this instruction has already executed if the exception is valid
-  assign instruction_o.valid = instruction_o.ex.valid;
-
   always_comb begin : exception_handling
     interrupt_cause = '0;
-    instruction_o.ex = ex_i;
+    instruction_ex = ex_i;
     orig_instr_o = '0;
     // look if we didn't already get an exception in any previous
     // stage - we should not overwrite it as we retain order regarding the exception
@@ -1849,44 +1904,44 @@ module decoder
       if (CVA6Cfg.CvxifEn || CVA6Cfg.RVF)
         orig_instr_o = (is_compressed_i) ? {{CVA6Cfg.XLEN-16{1'b0}}, compressed_instr_i} : {{CVA6Cfg.XLEN-32{1'b0}}, instruction_i};
       if (CVA6Cfg.TvalEn)
-        instruction_o.ex.tval  = (is_compressed_i) ? {{CVA6Cfg.XLEN-16{1'b0}}, compressed_instr_i} : {{CVA6Cfg.XLEN-32{1'b0}}, instruction_i};
-      else instruction_o.ex.tval = '0;
-      if (CVA6Cfg.RVH) instruction_o.ex.tinst = tinst;
-      else instruction_o.ex.tinst = '0;
+        instruction_ex.tval  = (is_compressed_i) ? {{CVA6Cfg.XLEN-16{1'b0}}, compressed_instr_i} : {{CVA6Cfg.XLEN-32{1'b0}}, instruction_i};
+      else instruction_ex.tval = '0;
+      if (CVA6Cfg.RVH) instruction_ex.tinst = tinst;
+      else instruction_ex.tinst = '0;
       // instructions which will throw an exception are marked as valid
       // e.g.: they can be committed anytime and do not need to wait for any functional unit
       // check here if we decoded an invalid instruction or if the compressed decoder already decoded
       // a invalid instruction
       if (illegal_instr || is_illegal_i) begin
-        if (!CVA6Cfg.CvxifEn) instruction_o.ex.valid = 1'b1;
+        if (!CVA6Cfg.CvxifEn) instruction_ex.valid = 1'b1;
         // we decoded an illegal exception here
-        instruction_o.ex.cause = riscv::ILLEGAL_INSTR;
+        instruction_ex.cause = riscv::ILLEGAL_INSTR;
       end else if (CVA6Cfg.RVH && virtual_illegal_instr) begin
-        instruction_o.ex.valid = 1'b1;
+        instruction_ex.valid = 1'b1;
         // we decoded an virtual illegal exception here
-        instruction_o.ex.cause = riscv::VIRTUAL_INSTRUCTION;
+        instruction_ex.cause = riscv::VIRTUAL_INSTRUCTION;
         // we got an ecall, set the correct cause depending on the current privilege level
       end else if (ecall) begin
         // this exception is valid
-        instruction_o.ex.valid = 1'b1;
+        instruction_ex.valid = 1'b1;
         // depending on the privilege mode, set the appropriate cause
         if (priv_lvl_i == riscv::PRIV_LVL_S && CVA6Cfg.RVS) begin
-          instruction_o.ex.cause = (CVA6Cfg.RVH && v_i) ? riscv::ENV_CALL_VSMODE : riscv::ENV_CALL_SMODE;
+          instruction_ex.cause = (CVA6Cfg.RVH && v_i) ? riscv::ENV_CALL_VSMODE : riscv::ENV_CALL_SMODE;
         end else if (priv_lvl_i == riscv::PRIV_LVL_U && CVA6Cfg.RVU) begin
-          instruction_o.ex.cause = riscv::ENV_CALL_UMODE;
+          instruction_ex.cause = riscv::ENV_CALL_UMODE;
         end else if (priv_lvl_i == riscv::PRIV_LVL_M) begin
-          instruction_o.ex.cause = riscv::ENV_CALL_MMODE;
+          instruction_ex.cause = riscv::ENV_CALL_MMODE;
         end
-        if (CVA6Cfg.TvalEn) instruction_o.ex.tval = '0;
+        if (CVA6Cfg.TvalEn) instruction_ex.tval = '0;
       end else if (ebreak) begin
         // this exception is valid
-        instruction_o.ex.valid = 1'b1;
+        instruction_ex.valid = 1'b1;
         // set breakpoint cause
-        instruction_o.ex.cause = riscv::BREAKPOINT;
+        instruction_ex.cause = riscv::BREAKPOINT;
         // set gva bit
-        if (CVA6Cfg.RVH) instruction_o.ex.gva = v_i;
-        else instruction_o.ex.gva = 1'b0;
-        if (CVA6Cfg.TvalEn) instruction_o.ex.tval = pc_i;
+        if (CVA6Cfg.RVH) instruction_ex.gva = v_i;
+        else instruction_ex.gva = 1'b0;
+        if (CVA6Cfg.TvalEn) instruction_ex.tval = pc_i;
       end
       // -----------------
       // Interrupt Control
@@ -1952,37 +2007,37 @@ module decoder
           if (CVA6Cfg.RVH) begin : hyp_int_gen
             if (v_i && irq_ctrl_i.hideleg[interrupt_cause[$clog2(CVA6Cfg.XLEN)-1:0]]) begin
               if ((irq_ctrl_i.sie && priv_lvl_i == riscv::PRIV_LVL_S) || priv_lvl_i == riscv::PRIV_LVL_U) begin
-                instruction_o.ex.valid = 1'b1;
-                instruction_o.ex.cause = interrupt_cause;
+                instruction_ex.valid = 1'b1;
+                instruction_ex.cause = interrupt_cause;
               end
             end else if (v_i && ~irq_ctrl_i.hideleg[interrupt_cause[$clog2(
                     CVA6Cfg.XLEN
                 )-1:0]]) begin
-              instruction_o.ex.valid = 1'b1;
-              instruction_o.ex.cause = interrupt_cause;
+              instruction_ex.valid = 1'b1;
+              instruction_ex.cause = interrupt_cause;
             end else if (!v_i && ((irq_ctrl_i.sie && priv_lvl_i == riscv::PRIV_LVL_S) || priv_lvl_i == riscv::PRIV_LVL_U) && ~irq_ctrl_i.hideleg[interrupt_cause[$clog2(
                     CVA6Cfg.XLEN
                 )-1:0]]) begin
-              instruction_o.ex.valid = 1'b1;
-              instruction_o.ex.cause = interrupt_cause;
+              instruction_ex.valid = 1'b1;
+              instruction_ex.cause = interrupt_cause;
             end
           end else begin
             if ((CVA6Cfg.RVS && irq_ctrl_i.sie && priv_lvl_i == riscv::PRIV_LVL_S) || (CVA6Cfg.RVU && priv_lvl_i == riscv::PRIV_LVL_U)) begin
-              instruction_o.ex.valid = 1'b1;
-              instruction_o.ex.cause = interrupt_cause;
+              instruction_ex.valid = 1'b1;
+              instruction_ex.cause = interrupt_cause;
             end
           end
         end else begin
-          instruction_o.ex.valid = 1'b1;
-          instruction_o.ex.cause = interrupt_cause;
+          instruction_ex.valid = 1'b1;
+          instruction_ex.cause = interrupt_cause;
         end
       end
     end
 
     // a debug request has precendece over everything else
     if ((CVA6Cfg.DebugEn && debug_req_i && !debug_mode_i) || (CVA6Cfg.SDTRIG && CVA6Cfg.Mcontrol6 && CVA6Cfg.DebugEn && !debug_mode_i && debug_from_trigger_i)) begin
-      instruction_o.ex.valid = 1'b1;
-      instruction_o.ex.cause = riscv::DEBUG_REQUEST;
+      instruction_ex.valid = 1'b1;
+      instruction_ex.cause = riscv::DEBUG_REQUEST;
     end
   end
 endmodule

@@ -197,6 +197,7 @@ module wt_dcache_wbuffer
   logic [CVA6Cfg.PLEN-1:0] debug_paddr[CVA6Cfg.WtDcacheWbufDepth-1:0];
 
   wbuffer_t wbuffer_check_mux, wbuffer_dirty_mux;
+  logic req_port_data_gnt;
 
   ///////////////////////////////////////////////////////
   // misc
@@ -504,6 +505,7 @@ module wt_dcache_wbuffer
   assign req_port_o.data_rdata  = '0;
   assign req_port_o.data_ruser  = '0;
   assign req_port_o.data_rid    = '0;
+  assign req_port_o.data_gnt    = req_port_data_gnt;
 
   assign rd_hit_oh_d = rd_hit_oh_i;
 
@@ -518,7 +520,7 @@ module wt_dcache_wbuffer
     wbuffer_d           = wbuffer_q;
     ni_pending_d        = ni_pending_q;
     dirty_rd_en         = 1'b0;
-    req_port_o.data_gnt = 1'b0;
+    req_port_data_gnt   = 1'b0;
     wbuffer_wren        = 1'b0;
 
     // TAG lookup returns, mark corresponding word
@@ -577,7 +579,7 @@ module wt_dcache_wbuffer
       if (!ni_conflict) begin  //empty of NI operations
         wbuffer_wren = 1'b1;
 
-        req_port_o.data_gnt = 1'b1;
+        req_port_data_gnt = 1'b1;
         ni_pending_d[wr_ptr] = is_ni;
 
         wbuffer_d[wr_ptr].checked = 1'b0;

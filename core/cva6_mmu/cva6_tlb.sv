@@ -319,7 +319,7 @@ module cva6_tlb
       end
 
       if (tags_q[i].is_napot_64k && CVA6Cfg.SvnapotEn) begin
-        temp_stored_vpn = {tags_q[i].vpn[2], tags_q[i].vpn[1], tags_q[i].vpn[0]};
+        temp_stored_vpn = CVA6Cfg.VpnLen'(tags_q[i].vpn);
         // Mask the lower 4 bits of the VPN (addr[15:12]) for comparison
         flush_vpn_masked = vaddr_to_be_flushed_i[CVA6Cfg.VpnLen+11:12] & ~'hF;
         stored_vpn_masked = temp_stored_vpn & ~'hF;

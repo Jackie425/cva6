@@ -232,9 +232,13 @@ module csr_regfile
   logic dret;  // return from debug mode
   // CSR write causes us to mark the FPU state as dirty
   logic dirty_fp_state_csr;
+  typedef logic [63:0] mstatus_bits_t;
   riscv::mstatus_rv_t mstatus_q, mstatus_d;
+  mstatus_bits_t mstatus_q_bits;
   riscv::hstatus_rv_t hstatus_q, hstatus_d;
+  mstatus_bits_t hstatus_q_bits;
   riscv::mstatus_rv_t vsstatus_q, vsstatus_d;
+  mstatus_bits_t vsstatus_q_bits;
   logic [CVA6Cfg.XLEN-1:0] mstatus_extended;
   logic [31:0] mstatush;
   logic [CVA6Cfg.XLEN-1:0] vsstatus_extended;
@@ -297,8 +301,8 @@ module csr_regfile
   logic [63:0] cycle_q, cycle_d;
   logic [63:0] instret_q, instret_d;
 
-  riscv::pmpcfg_t [63:0] pmpcfg_q, pmpcfg_d, pmpcfg_next;
-  logic [63:0][CVA6Cfg.PLEN-3:0] pmpaddr_q, pmpaddr_d, pmpaddr_next;
+  riscv::pmpcfg_t [63:0] pmpcfg_q, pmpcfg_d, pmpcfg_next, pmpcfg_rst;
+  logic [63:0][CVA6Cfg.PLEN-3:0] pmpaddr_q, pmpaddr_d, pmpaddr_next, pmpaddr_rst;
   logic [MHPMCounterNum+3-1:0] mcountinhibit_d, mcountinhibit_q;
 
   // Trigger Module Registers
@@ -316,6 +320,16 @@ module csr_regfile
   logic break_from_trigger;
   logic debug_from_trigger;
   logic debug_from_mcontrol;
+
+  for (genvar i = 0; i < 64; i++) begin : gen_pmp_reset_values
+    if (i < CVA6Cfg.NrPMPEntries) begin : gen_active_pmp_reset
+      assign pmpcfg_rst[i]  = riscv::pmpcfg_t'(CVA6Cfg.PMPCfgRstVal[i]);
+      assign pmpaddr_rst[i] = CVA6Cfg.PMPAddrRstVal[i][CVA6Cfg.PLEN-3:0];
+    end else begin : gen_inactive_pmp_reset
+      assign pmpcfg_rst[i]  = '0;
+      assign pmpaddr_rst[i] = '0;
+    end
+  end
 
   // CBO enable flags from menvcfg/senvcfg/henvcfg
   riscv::cbie_t mcbie_q, mcbie_d, scbie_q, scbie_d, hcbie_q, hcbie_d;
@@ -351,17 +365,20 @@ module csr_regfile
   assign fs_o = mstatus_q.fs;
   assign vfs_o = (CVA6Cfg.RVH) ? vsstatus_q.fs : riscv::Off;
   assign vs_o = mstatus_q.vs;
+  assign mstatus_q_bits = mstatus_bits_t'(mstatus_q);
+  assign hstatus_q_bits = mstatus_bits_t'(hstatus_q);
+  assign vsstatus_q_bits = mstatus_bits_t'(vsstatus_q);
   // ----------------
   // CSR Read logic
   // ----------------
-  assign mstatus_extended = CVA6Cfg.IS_XLEN64 ? mstatus_q[CVA6Cfg.XLEN-1:0] :
-                              {mstatus_q.sd, mstatus_q.wpri3[7:0], mstatus_q[22:0]};
+  assign mstatus_extended = CVA6Cfg.IS_XLEN64 ? mstatus_q_bits[CVA6Cfg.XLEN-1:0] :
+                              {mstatus_q.sd, mstatus_q.wpri3[7:0], mstatus_q_bits[22:0]};
   assign mstatush = {24'h0, mstatus_q.mpv, mstatus_q.gva, mstatus_q.mbe, mstatus_q.sbe, 4'h0};
   if (CVA6Cfg.RVH) begin
     if (CVA6Cfg.IS_XLEN64) begin : gen_vsstatus_64read
-      assign vsstatus_extended = vsstatus_q[CVA6Cfg.XLEN-1:0];
+      assign vsstatus_extended = vsstatus_q_bits[CVA6Cfg.XLEN-1:0];
     end else begin : gen_vsstatus_32read
-      assign vsstatus_extended = {vsstatus_q.sd, vsstatus_q.wpri3[7:0], vsstatus_q[22:0]};
+      assign vsstatus_extended = {vsstatus_q.sd, vsstatus_q.wpri3[7:0], vsstatus_q_bits[22:0]};
     end
   end else begin
     assign vsstatus_extended = '0;
@@ -541,7 +558,7 @@ module csr_regfile
         end
         // hypervisor mode registers
         riscv::CSR_HSTATUS:
-        if (CVA6Cfg.RVH) csr_rdata = hstatus_q[CVA6Cfg.XLEN-1:0];
+        if (CVA6Cfg.RVH) csr_rdata = hstatus_q_bits[CVA6Cfg.XLEN-1:0];
         else read_access_exception = 1'b1;
         riscv::CSR_HEDELEG:
         if (CVA6Cfg.RVH) csr_rdata = hedeleg_q;
@@ -1141,7 +1158,8 @@ module csr_regfile
         riscv::CSR_FCSR: begin
           if (CVA6Cfg.FpPresent && !(mstatus_q.fs == riscv::Off || (CVA6Cfg.RVH && v_q && vsstatus_q.fs == riscv::Off))) begin
             dirty_fp_state_csr = 1'b1;
-            fcsr_d[7:0] = csr_wdata[7:0];  // ignore writes to reserved space
+            fcsr_d.fflags = csr_wdata[4:0];
+            fcsr_d.frm = csr_wdata[7:5];  // ignore writes to reserved space
             // this instruction has side-effects
             flush_o = 1'b1;
           end else begin
@@ -1496,7 +1514,7 @@ module csr_regfile
             else begin
               hgatp = hgatp_t'(csr_wdata);
               //hardwire PPN[1:0] to zero
-              hgatp[1:0] = 2'b0;
+              hgatp.ppn[1:0] = 2'b0;
               // only make VMID_LEN - 1 bit stick, that way software can figure out how many VMID bits are supported
               hgatp.vmid = hgatp.vmid & {{(CVA6Cfg.VMIDW - CVA6Cfg.VMID_WIDTH) {1'b0}}, {CVA6Cfg.VMID_WIDTH{1'b1}}};
               // only update if we actually support this mode
@@ -2842,15 +2860,8 @@ module csr_regfile
       // wait for interrupt
       wfi_q                  <= 1'b0;
       // pmp
-      for (int i = 0; i < 64; i++) begin
-        if (i < CVA6Cfg.NrPMPEntries) begin
-          pmpcfg_q[i]  <= riscv::pmpcfg_t'(CVA6Cfg.PMPCfgRstVal[i]);
-          pmpaddr_q[i] <= CVA6Cfg.PMPAddrRstVal[i][CVA6Cfg.PLEN-3:0];
-        end else begin
-          pmpcfg_q[i]  <= '0;
-          pmpaddr_q[i] <= '0;
-        end
-      end
+      pmpcfg_q               <= pmpcfg_rst;
+      pmpaddr_q              <= pmpaddr_rst;
     end else begin
       priv_lvl_q <= priv_lvl_d;
       // floating-point registers
@@ -2949,32 +2960,33 @@ module csr_regfile
   assign break_from_trigger_o = break_from_trigger;  // from trigger module to commit stage
 
   // write logic pmp
-  always_comb begin : write
-    for (int i = 0; i < 64; i++) begin
-      if (i < CVA6Cfg.NrPMPEntries) begin
-        if (!CVA6Cfg.PMPEntryReadOnly[i]) begin
-          // PMP locked logic is handled in the CSR write process above
-          pmpcfg_next[i] = pmpcfg_d[i];
-          // We only support >=8-byte granularity, NA4 is not supported
-          if ((!CVA6Cfg.PMPNapotEn && pmpcfg_d[i].addr_mode == riscv::NAPOT) ||pmpcfg_d[i].addr_mode == riscv::NA4) begin
-            pmpcfg_next[i].addr_mode = pmpcfg_q[i].addr_mode;
-          end
-          // Follow collective WARL spec for RWX fields
-          if (pmpcfg_d[i].access_type.r == '0 && pmpcfg_d[i].access_type.w == '1) begin
-            pmpcfg_next[i].access_type = pmpcfg_q[i].access_type;
-          end
-        end else begin
-          pmpcfg_next[i] = pmpcfg_q[i];
-        end
-        if (!CVA6Cfg.PMPEntryReadOnly[i]) begin
-          pmpaddr_next[i] = pmpaddr_d[i];
-        end else begin
-          pmpaddr_next[i] = pmpaddr_q[i];
-        end
-      end else begin
-        pmpcfg_next[i]  = '0;
-        pmpaddr_next[i] = '0;
+  for (genvar i = 0; i < 64; i++) begin : gen_pmp_next
+    if (i < CVA6Cfg.NrPMPEntries) begin : gen_active_pmp_next
+      if (CVA6Cfg.PMPEntryReadOnly[i]) begin : gen_read_only_pmp_next
+        assign pmpcfg_next[i]  = pmpcfg_q[i];
+        assign pmpaddr_next[i] = pmpaddr_q[i];
+      end else begin : gen_writable_pmp_next
+        logic pmp_bad_addr_mode;
+        logic pmp_bad_access_type;
+
+        assign pmp_bad_addr_mode = ((!CVA6Cfg.PMPNapotEn) &&
+                                    (pmpcfg_d[i].addr_mode == riscv::NAPOT)) ||
+                                   (pmpcfg_d[i].addr_mode == riscv::NA4);
+        assign pmp_bad_access_type = (pmpcfg_d[i].access_type.r == 1'b0) &&
+                                     (pmpcfg_d[i].access_type.w == 1'b1);
+
+        // PMP locked logic is handled in the CSR write process above.
+        assign pmpcfg_next[i] = riscv::pmpcfg_t'{
+            locked: pmpcfg_d[i].locked,
+            reserved: 2'b0,
+            addr_mode: pmp_bad_addr_mode ? pmpcfg_q[i].addr_mode : pmpcfg_d[i].addr_mode,
+            access_type: pmp_bad_access_type ? pmpcfg_q[i].access_type : pmpcfg_d[i].access_type
+        };
+        assign pmpaddr_next[i] = pmpaddr_d[i];
       end
+    end else begin : gen_inactive_pmp_next
+      assign pmpcfg_next[i]  = '0;
+      assign pmpaddr_next[i] = '0;
     end
   end
 

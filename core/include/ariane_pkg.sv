@@ -545,9 +545,9 @@ package ariane_pkg;
   } alu_bypass_t;
 
   function automatic logic op_is_branch(input fu_op op);
-    unique case (op) inside
+    unique case (op)
       EQ, NE, LTS, GES, LTU, GEU: return 1'b1;
-      default:                    return 1'b0;  // all other ops
+      default:                    return 1'b0;
     endcase
   endfunction
 
@@ -557,34 +557,27 @@ package ariane_pkg;
   // function used in instr_trace svh
   // is_rs1_fpr function is kept to allow cva6 compilation with instr_trace feature
   function automatic logic is_rs1_fpr(input fu_op op);
-    unique case (op) inside
-      [FMUL : FNMADD],  // Computational Operations (except ADD/SUB)
-      FCVT_F2I,  // Float-Int Casts
-      FCVT_F2F,  // Float-Float Casts
-      FSGNJ,  // Sign Injections
-      FMV_F2X,  // FPR-GPR Moves
-      FCMP,  // Comparisons
-      FCLASS,  // Classifications
-      [VFMIN : VFCPKCD_D],  // Additional Vectorial FP ops
-      ACCEL_OP_FS1:
-      return 1'b1;  // Accelerator instructions
-      default: return 1'b0;  // all other ops
+    unique case (op)
+      FMUL, FDIV, FMIN_MAX, FSQRT, FMADD, FMSUB, FNMSUB, FNMADD,
+      FCVT_F2I, FCVT_F2F, FSGNJ, FMV_F2X, FCMP, FCLASS,
+      VFMIN, VFMAX, VFSGNJ, VFSGNJN, VFSGNJX, VFEQ, VFNE, VFLT, VFGE, VFLE, VFGT,
+      VFCPKAB_S, VFCPKCD_S, VFCPKAB_D, VFCPKCD_D,
+      ACCEL_OP_FS1: return 1'b1;
+      default:      return 1'b0;
     endcase
   endfunction
 
   // function used in instr_trace svh
   // is_rs2_fpr function is kept to allow cva6 compilation with instr_trace feature
   function automatic logic is_rs2_fpr(input fu_op op);
-    unique case (op) inside
-      [FSD : FSB],  // FP Stores
-      [FADD : FMIN_MAX],  // Computational Operations (no sqrt)
-      [FMADD : FNMADD],  // Fused Computational Operations
-      FCVT_F2F,  // Vectorial F2F Conversions require target
-      [FSGNJ : FMV_F2X],  // Sign Injections and moves mapped to SGNJ
-      FCMP,  // Comparisons
-      [VFMIN : VFCPKCD_D]:
-      return 1'b1;  // Additional Vectorial FP ops
-      default: return 1'b0;  // all other ops
+    unique case (op)
+      FSD, FSW, FSH, FSB,
+      FADD, FSUB, FMUL, FDIV, FMIN_MAX,
+      FMADD, FMSUB, FNMSUB, FNMADD,
+      FCVT_F2F, FSGNJ, FMV_F2X, FCMP,
+      VFMIN, VFMAX, VFSGNJ, VFSGNJN, VFSGNJX, VFEQ, VFNE, VFLT, VFGE, VFLE, VFGT,
+      VFCPKAB_S, VFCPKCD_S, VFCPKAB_D, VFCPKCD_D: return 1'b1;
+      default:                                    return 1'b0;
     endcase
   endfunction
 
@@ -592,49 +585,42 @@ package ariane_pkg;
   // is_imm_fpr function is kept to allow cva6 compilation with instr_trace feature
   // ternary operations encode the rs3 address in the imm field, also add/sub
   function automatic logic is_imm_fpr(input fu_op op);
-    unique case (op) inside
-      [FADD : FSUB],  // ADD/SUB need inputs as Operand B/C
-      [FMADD : FNMADD],  // Fused Computational Operations
-      [VFCPKAB_S : VFCPKCD_D]:
-      return 1'b1;  // Vectorial FP cast and pack ops
-      default: return 1'b0;  // all other ops
+    unique case (op)
+      FADD, FSUB,
+      FMADD, FMSUB, FNMSUB, FNMADD,
+      VFCPKAB_S, VFCPKCD_S, VFCPKAB_D, VFCPKCD_D: return 1'b1;
+      default:                                    return 1'b0;
     endcase
   endfunction
 
   // function used in instr_trace svh
   // is_rd_fpr function is kept to allow cva6 compilation with instr_trace feature
   function automatic logic is_rd_fpr(input fu_op op);
-    unique case (op) inside
-      [FLD : FLB],  // FP Loads
-      [FADD : FNMADD],  // Computational Operations
-      FCVT_I2F,  // Int-Float Casts
-      FCVT_F2F,  // Float-Float Casts
-      FSGNJ,  // Sign Injections
-      FMV_X2F,  // GPR-FPR Moves
-      [VFMIN : VFSGNJX],  // Vectorial MIN/MAX and SGNJ
-      [VFCPKAB_S : VFCPKCD_D],  // Vectorial FP cast and pack ops
-      ACCEL_OP_FD:
-      return 1'b1;  // Accelerator instructions
-      default: return 1'b0;  // all other ops
+    unique case (op)
+      FLD, FLW, FLH, FLB,
+      FADD, FSUB, FMUL, FDIV, FMIN_MAX, FSQRT, FMADD, FMSUB, FNMSUB, FNMADD,
+      FCVT_I2F, FCVT_F2F, FSGNJ, FMV_X2F,
+      VFMIN, VFMAX, VFSGNJ, VFSGNJN, VFSGNJX,
+      VFCPKAB_S, VFCPKCD_S, VFCPKAB_D, VFCPKCD_D,
+      ACCEL_OP_FD: return 1'b1;
+      default:     return 1'b0;
     endcase
   endfunction
 
   function automatic logic fd_changes_rd_state(input fu_op op);
-    unique case (op) inside
-      FSD, FSW, FSH, FSB,  // stores
-      FCVT_F2I,  // conversion to int
-      FMV_F2X,  // move as-is to int
-      FCLASS:  // classification (writes output to integer register)
-      return 1'b0;  // floating-point registers are only read
-      default: return 1'b1;  // other ops - floating-point registers are written as well
+    unique case (op)
+      FSD, FSW, FSH, FSB,
+      FCVT_F2I, FMV_F2X, FCLASS: return 1'b0;
+      default:                   return 1'b1;
     endcase
   endfunction
 
   function automatic logic is_amo(fu_op op);
-    case (op) inside
-      [AMO_LRW : AMO_MINDU]: begin
+    unique case (op)
+      AMO_LRW, AMO_LRD, AMO_SCW, AMO_SCD, AMO_SWAPW, AMO_ADDW, AMO_ANDW, AMO_ORW,
+      AMO_XORW, AMO_MAXW, AMO_MAXWU, AMO_MINW, AMO_MINWU, AMO_SWAPD, AMO_ADDD,
+      AMO_ANDD, AMO_ORD, AMO_XORD, AMO_MAXD, AMO_MAXDU, AMO_MIND, AMO_MINDU:
         return 1'b1;
-      end
       default: return 1'b0;
     endcase
   endfunction

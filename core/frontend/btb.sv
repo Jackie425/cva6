@@ -150,11 +150,19 @@ module btb #(
     // we may want to try to put a tag field that fills the rest of the PC in-order to mitigate aliasing effects
     btb_prediction_t
         btb_d[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0],
-        btb_q[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0];
+        btb_q[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0],
+        btb_flush_q[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0];
 
     // output matching prediction
     for (genvar i = 0; i < CVA6Cfg.INSTR_PER_FETCH; i++) begin : gen_btb_output
       assign btb_prediction_o[i] = btb_q[index][i];  // workaround
+    end
+
+    for (genvar row = 0; row < NR_ROWS; row++) begin : gen_btb_flush_row
+      for (genvar entry = 0; entry < CVA6Cfg.INSTR_PER_FETCH; entry++) begin : gen_btb_flush_entry
+        assign btb_flush_q[row][entry].valid = 1'b0;
+        assign btb_flush_q[row][entry].target_address = btb_q[row][entry].target_address;
+      end
     end
 
     // -------------------------
@@ -175,15 +183,11 @@ module btb #(
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) begin
         // Bias the branches to be taken upon first arrival
-        for (int i = 0; i < NR_ROWS; i++) btb_q[i] <= '{default: 0};
+        btb_q <= '{default: '0};
       end else begin
         // evict all entries
         if (flush_bp_i) begin
-          for (int i = 0; i < NR_ROWS; i++) begin
-            for (int j = 0; j < CVA6Cfg.INSTR_PER_FETCH; j++) begin
-              btb_q[i][j].valid <= 1'b0;
-            end
-          end
+          btb_q <= btb_flush_q;
         end else begin
           btb_q <= btb_d;
         end

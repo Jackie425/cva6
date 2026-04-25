@@ -144,6 +144,10 @@ module wt_dcache_missunit
   logic [63:0] amo_rtrn_mux;
   logic [CVA6Cfg.XLEN-1:0] amo_data, amo_data_a, amo_data_b;
   logic [CVA6Cfg.XLEN-1:0] amo_user;  //DCACHE USER ? CVA6Cfg.DCACHE_USER_WIDTH
+  logic amo_resp_ack;
+  logic [63:0] amo_resp_result;
+  wt_cache_pkg::dcache_out_t mem_data_rtype;
+  logic [2:0] mem_data_size;
   logic [CVA6Cfg.PLEN-1:0] tmp_paddr;
   logic [$clog2(NumPorts)-1:0] miss_port_idx;
   logic [DCACHE_CL_IDX_WIDTH-1:0] cnt_d, cnt_q;
@@ -312,23 +316,31 @@ module wt_dcache_missunit
     assign amoResult_BE = (amo_req_i.size == 2'b10) ? amoResult_32bitBE : amoResult_64bitBE;
     assign amoResult_LE = (amo_req_i.size == 2'b10) ? amoResult_32bitLE : amo_rtrn_mux;
 
-    assign amo_resp_o.result = mbe_i ? amoResult_BE : amoResult_LE;
+    assign amo_resp_result = mbe_i ? amoResult_BE : amoResult_LE;
     // end BIG ENDIAN CAPABLE logic for amo return value from memory
 
     assign amo_req_d = amo_req_i.req;
+  end else begin : gen_no_amo
+    assign amo_resp_result = '0;
+    assign amo_req_d       = '0;
   end
 
   // outgoing memory requests (AMOs are always uncached)
+  assign amo_resp_o.ack = amo_resp_ack;
+  assign amo_resp_o.result = amo_resp_result;
+
+  assign mem_data_o.rtype = mem_data_rtype;
   assign mem_data_o.tid = (CVA6Cfg.RVA && amo_sel) ? AmoTxId : miss_id_i[miss_port_idx];
   assign mem_data_o.nc = (CVA6Cfg.RVA && amo_sel) ? 1'b1 : miss_nc_i[miss_port_idx];
   assign mem_data_o.way = (CVA6Cfg.RVA && amo_sel) ? '0 : repl_way;
   assign mem_data_o.data = (CVA6Cfg.RVA && amo_sel) ? amo_data : miss_wdata_i[miss_port_idx];
   assign mem_data_o.user = (CVA6Cfg.RVA && amo_sel) ? amo_user : miss_wuser_i[miss_port_idx];
-  assign mem_data_o.size   = (CVA6Cfg.RVA && amo_sel) ? {1'b0, amo_req_i.size} : miss_size_i [miss_port_idx];
+  assign mem_data_size = (CVA6Cfg.RVA && amo_sel) ? {1'b0, amo_req_i.size} : miss_size_i [miss_port_idx];
+  assign mem_data_o.size = mem_data_size;
   assign mem_data_o.amo_op = (CVA6Cfg.RVA && amo_sel) ? amo_req_i.amo_op : AMO_NONE;
 
   assign tmp_paddr         = (CVA6Cfg.RVA && amo_sel) ? amo_req_i.operand_a[CVA6Cfg.PLEN-1:0] : miss_paddr_i[miss_port_idx];
-  assign mem_data_o.paddr = paddrSizeAlign(tmp_paddr, mem_data_o.size);
+  assign mem_data_o.paddr = paddrSizeAlign(tmp_paddr, mem_data_size);
 
   ///////////////////////////////////////////////////////
   // back-off mechanism for LR/SC completion guarantee
@@ -353,7 +365,7 @@ module wt_dcache_missunit
   // keep track of pending stores
   logic store_sent;
   logic [$clog2(CVA6Cfg.DCACHE_MAX_TX + 1)-1:0] stores_inflight_d, stores_inflight_q;
-  assign store_sent = mem_data_req_o & mem_data_ack_i & (mem_data_o.rtype == DCACHE_STORE_REQ);
+  assign store_sent = mem_data_req_o & mem_data_ack_i & (mem_data_rtype == DCACHE_STORE_REQ);
 
   assign stores_inflight_d = (store_ack && store_sent) ? stores_inflight_q     :
                              (store_ack)               ? stores_inflight_q - 1 :
@@ -391,7 +403,7 @@ module wt_dcache_missunit
               // need to set SC backoff counter if
               // this op failed
               if (amo_req_i.amo_op == AMO_SC) begin
-                if (amo_resp_o.result > 0) begin
+                if (amo_resp_result > 0) begin
                   sc_fail = 1'b1;
                 end else begin
                   sc_pass = 1'b1;
@@ -456,9 +468,9 @@ module wt_dcache_missunit
     state_d          = state_q;
 
     flush_ack_o      = 1'b0;
-    mem_data_o.rtype = DCACHE_LOAD_REQ;
+    mem_data_rtype   = DCACHE_LOAD_REQ;
     mem_data_req_o   = 1'b0;
-    amo_resp_o.ack   = 1'b0;
+    amo_resp_ack     = 1'b0;
     miss_replay_o    = '0;
 
     // disabling cache is possible anytime, enabling goes via flush
@@ -496,7 +508,7 @@ module wt_dcache_missunit
             // stall in case this write collides with the MSHR address
             if (!mshr_rdwr_collision) begin
               mem_data_req_o   = 1'b1;
-              mem_data_o.rtype = DCACHE_STORE_REQ;
+              mem_data_rtype   = DCACHE_STORE_REQ;
               if (!mem_data_ack_i) begin
                 state_d = STORE_WAIT;
               end
@@ -511,7 +523,7 @@ module wt_dcache_missunit
               // stall in case this CL address overlaps with a write TX that is in flight
             end else if (!tx_rdwr_collision) begin
               mem_data_req_o   = 1'b1;
-              mem_data_o.rtype = DCACHE_LOAD_REQ;
+              mem_data_rtype   = DCACHE_LOAD_REQ;
               update_lfsr      = all_ways_valid & mem_data_ack_i;  // need to evict a random way
               mshr_allocate    = mem_data_ack_i;
               if (!mem_data_ack_i) begin
@@ -526,7 +538,7 @@ module wt_dcache_missunit
       STORE_WAIT: begin
         lock_reqs        = 1'b1;
         mem_data_req_o   = 1'b1;
-        mem_data_o.rtype = DCACHE_STORE_REQ;
+        mem_data_rtype   = DCACHE_STORE_REQ;
         if (mem_data_ack_i) begin
           state_d = IDLE;
         end
@@ -536,7 +548,7 @@ module wt_dcache_missunit
       LOAD_WAIT: begin
         lock_reqs        = 1'b1;
         mem_data_req_o   = 1'b1;
-        mem_data_o.rtype = DCACHE_LOAD_REQ;
+        mem_data_rtype   = DCACHE_LOAD_REQ;
         if (mem_data_ack_i) begin
           update_lfsr   = all_ways_valid;  // need to evict a random way
           mshr_allocate = 1'b1;
@@ -551,7 +563,7 @@ module wt_dcache_missunit
         // these are writes, check whether they collide with MSHR
         if (|miss_req_masked_d && !mshr_rdwr_collision) begin
           mem_data_req_o   = 1'b1;
-          mem_data_o.rtype = DCACHE_STORE_REQ;
+          mem_data_rtype   = DCACHE_STORE_REQ;
         end
 
         if (wbuffer_empty_i && !mshr_vld_q) begin
@@ -574,7 +586,7 @@ module wt_dcache_missunit
       // send out amo op request
       AMO: begin
         if (CVA6Cfg.RVA) begin
-          mem_data_o.rtype = DCACHE_ATOMIC_REQ;
+          mem_data_rtype   = DCACHE_ATOMIC_REQ;
           amo_sel          = 1'b1;
           // if this is an LR, we need to consult the backoff counter
           if ((amo_req_i.amo_op != AMO_LR) || sc_backoff_over) begin
@@ -591,8 +603,8 @@ module wt_dcache_missunit
         if (CVA6Cfg.RVA) begin
           amo_sel = 1'b1;
           if (amo_ack) begin
-            amo_resp_o.ack = 1'b1;
-            state_d        = IDLE;
+            amo_resp_ack = 1'b1;
+            state_d      = IDLE;
           end
         end
       end

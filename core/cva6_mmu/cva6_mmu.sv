@@ -736,33 +736,64 @@ module cva6_mmu
   // Registers
   // ----------
   always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (~rst_ni) begin
-      lsu_vaddr_q     <= '0;
-      lsu_gpaddr_q    <= '0;
-      lsu_req_q       <= '0;
-      dtlb_pte_q      <= '0;
-      dtlb_gpte_q     <= '0;
-      dtlb_hit_q      <= '0;
-      lsu_is_store_q  <= '0;
-      dtlb_is_page_q  <= '0;
-      lsu_tinst_q     <= '0;
-      hs_ld_st_inst_q <= '0;
-      misaligned_ex_q <= '0;
-    end else begin
-      lsu_vaddr_q     <= lsu_vaddr_n;
-      lsu_req_q       <= lsu_req_n;
-      dtlb_pte_q      <= dtlb_pte_n;
-      dtlb_hit_q      <= dtlb_hit_n;
-      lsu_is_store_q  <= lsu_is_store_n;
-      dtlb_is_page_q  <= dtlb_is_page_n;
-      misaligned_ex_q <= misaligned_ex_n;
+    if (~rst_ni) lsu_vaddr_q <= '0;
+    else lsu_vaddr_q <= lsu_vaddr_n;
+  end
 
-      if (CVA6Cfg.RVH) begin
-        lsu_tinst_q     <= lsu_tinst_n;
-        hs_ld_st_inst_q <= hs_ld_st_inst_n;
-        dtlb_gpte_q     <= dtlb_gpte_n;
-        lsu_gpaddr_q    <= lsu_gpaddr_n;
-      end
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) lsu_req_q <= '0;
+    else lsu_req_q <= lsu_req_n;
+  end
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) dtlb_pte_q <= '0;
+    else dtlb_pte_q <= dtlb_pte_n;
+  end
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) dtlb_hit_q <= '0;
+    else dtlb_hit_q <= dtlb_hit_n;
+  end
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) lsu_is_store_q <= '0;
+    else lsu_is_store_q <= lsu_is_store_n;
+  end
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) dtlb_is_page_q <= '0;
+    else dtlb_is_page_q <= dtlb_is_page_n;
+  end
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) misaligned_ex_q <= '0;
+    else misaligned_ex_q <= misaligned_ex_n;
+  end
+
+  if (CVA6Cfg.RVH) begin : gen_rvh_data_regs
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (~rst_ni) lsu_tinst_q <= '0;
+      else lsu_tinst_q <= lsu_tinst_n;
     end
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (~rst_ni) hs_ld_st_inst_q <= '0;
+      else hs_ld_st_inst_q <= hs_ld_st_inst_n;
+    end
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (~rst_ni) dtlb_gpte_q <= '0;
+      else dtlb_gpte_q <= dtlb_gpte_n;
+    end
+
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (~rst_ni) lsu_gpaddr_q <= '0;
+      else lsu_gpaddr_q <= lsu_gpaddr_n;
+    end
+  end else begin : gen_no_rvh_data_regs
+    assign lsu_tinst_q     = '0;
+    assign hs_ld_st_inst_q = 1'b0;
+    assign dtlb_gpte_q     = '0;
+    assign lsu_gpaddr_q    = '0;
   end
 endmodule

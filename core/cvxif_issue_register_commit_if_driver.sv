@@ -40,18 +40,15 @@ module cvxif_issue_register_commit_if_driver #(
 );
   // X_ISSUE_REGISTER_SPLIT = 0 : Issue and register transactions are synchronous
   // Mandatory assignment
-  assign register_valid_o  = issue_valid_o;
-  assign register_o.hartid = issue_req_o.hartid;
-  assign register_o.id     = issue_req_o.id;
-
-  always_comb begin
-    issue_valid_o       = valid_i && ~flush_i;
-    issue_req_o.instr   = x_off_instr_i;
-    issue_req_o.hartid  = hart_id_i;
-    issue_req_o.id      = x_trans_id_i;
-    register_o.rs       = register_i;
-    register_o.rs_valid = rs_valid_i;
-  end
+  assign issue_valid_o       = valid_i && ~flush_i;
+  assign issue_req_o.instr   = x_off_instr_i;
+  assign issue_req_o.hartid  = hart_id_i;
+  assign issue_req_o.id      = x_trans_id_i;
+  assign register_valid_o    = issue_valid_o;
+  assign register_o.hartid   = hart_id_i;
+  assign register_o.id       = x_trans_id_i;
+  assign register_o.rs       = register_i;
+  assign register_o.rs_valid = rs_valid_i;
 
   /* WARNING */
   // Always commit since speculation in execute in not possible : TODO to be verified
@@ -59,8 +56,8 @@ module cvxif_issue_register_commit_if_driver #(
   // Always do commit transaction with issue
   // If instruction goes to execute then it is not speculative
   assign commit_valid_o       = issue_valid_o && issue_ready_i;
-  assign commit_o.hartid      = issue_req_o.hartid;
-  assign commit_o.id          = issue_req_o.id;
+  assign commit_o.hartid      = hart_id_i;
+  assign commit_o.id          = x_trans_id_i;
   assign commit_o.commit_kill = 1'b0;
 
 endmodule

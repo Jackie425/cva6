@@ -94,6 +94,7 @@ module cva6_ptw
   logic data_rvalid_q;
   logic [CVA6Cfg.XLEN-1:0] data_rdata_q;
 
+  dcache_req_i_t req_port_n;
   pte_cva6_t pte;
   // register to perform context switch between stages
   pte_cva6_t gpte_q, gpte_d;
@@ -147,30 +148,27 @@ module cva6_ptw
   // register the VPN we need to walk, SV39x4 defines a 41 bit virtual address for the G-Stage
   logic [CVA6Cfg.GPLEN-1:0] gpaddr_q, gpaddr_n, gpaddr_base;
   logic [CVA6Cfg.PtLevels-1:0][CVA6Cfg.GPLEN-1:0] gpaddr;
+  logic g_stage_high_ppn_nonzero;
   // 4 byte aligned physical pointer
   logic [CVA6Cfg.PLEN-1:0] ptw_pptr_q, ptw_pptr_n;
   logic [CVA6Cfg.PLEN-1:0] gptw_pptr_q, gptw_pptr_n;
 
   // Assignments
+  assign req_port_o = req_port_n;
   assign update_vaddr_o = vaddr_q;
 
   assign ptw_active_o = (state_q != IDLE);
   assign walking_instr_o = is_instr_ptw_q;
-  // directly output the correct physical address
-  assign req_port_o.address_index = ptw_pptr_q[CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
-  assign req_port_o.address_tag   = ptw_pptr_q[CVA6Cfg.DCACHE_INDEX_WIDTH+CVA6Cfg.DCACHE_TAG_WIDTH-1:CVA6Cfg.DCACHE_INDEX_WIDTH];
-  // we are never going to write with the HPTW
-  assign req_port_o.data_wdata = '0;
-  // we only issue one single request at a time
-  assign req_port_o.data_id = '0;
-  // user field not used
-  assign req_port_o.data_wuser = '0;
-  // not a write
-  assign req_port_o.cbo_op = ariane_pkg::CBO_NONE;
 
   // -----------
   // TLB Update
   // -----------
+
+  if (CVA6Cfg.PPNW > CVA6Cfg.GPPNW) begin : gen_g_stage_high_ppn_check
+    assign g_stage_high_ppn_nonzero = |pte.ppn[CVA6Cfg.PPNW-1:CVA6Cfg.GPPNW];
+  end else begin : gen_no_g_stage_high_ppn_check
+    assign g_stage_high_ppn_nonzero = 1'b0;
+  end
 
   assign gpaddr_base = {pte.ppn[CVA6Cfg.GPPNW-1:0], vaddr_q[11:0]};
   assign gpaddr[CVA6Cfg.PtLevels-1] = gpaddr_base;
@@ -240,9 +238,6 @@ module cva6_ptw
       bad_gpaddr_o[CVA6Cfg.GPLEN-1:0] = ptw_error_at_g_st_o ? ((ptw_stage_q == G_INTERMED_STAGE) ? gptw_pptr_q[CVA6Cfg.GPLEN-1:0] : gpaddr_q) : 'b0;
   end
 
-  assign req_port_o.tag_valid = tag_valid_q;
-  assign req_port_o.kill_req  = (state_q == KILL_REQ);
-
   logic allow_access;
 
 
@@ -260,13 +255,6 @@ module cva6_ptw
       .conf_i       (pmpcfg_i),
       .allow_o      (allow_access)
   );
-
-
-  assign req_port_o.data_be = CVA6Cfg.XLEN == 32 ? be_gen_32(
-      req_port_o.address_index[1:0], req_port_o.data_size
-  ) : '1;
-
-
 
   //-------------------
   // Page table walker
@@ -298,9 +286,21 @@ module cva6_ptw
     // PTW memory interface
     tag_valid_n             = 1'b0;
     kill_req_n              = kill_req_q;
-    req_port_o.data_req     = 1'b0;
-    req_port_o.data_size    = 2'(CVA6Cfg.PtLevels);
-    req_port_o.data_we      = 1'b0;
+    req_port_n              = '0;
+    req_port_n.address_index = ptw_pptr_q[CVA6Cfg.DCACHE_INDEX_WIDTH-1:0];
+    req_port_n.address_tag   = ptw_pptr_q[CVA6Cfg.DCACHE_INDEX_WIDTH+CVA6Cfg.DCACHE_TAG_WIDTH-1:CVA6Cfg.DCACHE_INDEX_WIDTH];
+    req_port_n.data_wdata   = '0;
+    req_port_n.data_wuser   = '0;
+    req_port_n.data_req     = 1'b0;
+    req_port_n.data_we      = 1'b0;
+    req_port_n.data_be      = CVA6Cfg.XLEN == 32 ? be_gen_32(
+        ptw_pptr_q[1:0], 2'(CVA6Cfg.PtLevels)
+    ) : '1;
+    req_port_n.data_size    = 2'(CVA6Cfg.PtLevels);
+    req_port_n.data_id      = '0;
+    req_port_n.kill_req     = (state_q == KILL_REQ);
+    req_port_n.tag_valid    = tag_valid_q;
+    req_port_n.cbo_op       = ariane_pkg::CBO_NONE;
     ptw_error_o             = 1'b0;
     ptw_error_at_g_st_o     = 1'b0;
     ptw_err_at_g_int_st_o   = 1'b0;
@@ -400,7 +400,7 @@ module cva6_ptw
 
       WAIT_GRANT: begin
         // send a request out
-        req_port_o.data_req = 1'b1;
+        req_port_n.data_req = 1'b1;
         // wait for the WAIT_GRANT
         if (req_port_i.data_gnt) begin
           // send the tag valid signal one cycle later
@@ -525,7 +525,7 @@ module cva6_ptw
 
               // check if 63:41 are all zeros
               if (CVA6Cfg.RVH) begin
-                if (((v_i && is_instr_ptw_q) || (ld_st_v_i && !is_instr_ptw_q)) && ptw_stage_q == S_STAGE && !((|pte.ppn[CVA6Cfg.PPNW-1:CVA6Cfg.GPPNW]) == 1'b0)) begin
+                if (((v_i && is_instr_ptw_q) || (ld_st_v_i && !is_instr_ptw_q)) && ptw_stage_q == S_STAGE && g_stage_high_ppn_nonzero) begin
                   state_d = PROPAGATE_ERROR;
                   ptw_stage_d = G_FINAL_STAGE;
                 end
@@ -586,7 +586,7 @@ module cva6_ptw
 
               // check if 63:41 are all zeros
               if (CVA6Cfg.RVH) begin
-                if (((v_i && is_instr_ptw_q) || (ld_st_v_i && !is_instr_ptw_q)) && ptw_stage_q == S_STAGE && !((|pte.ppn[CVA6Cfg.PPNW-1:CVA6Cfg.GPPNW]) == 1'b0)) begin
+                if (((v_i && is_instr_ptw_q) || (ld_st_v_i && !is_instr_ptw_q)) && ptw_stage_q == S_STAGE && g_stage_high_ppn_nonzero) begin
                   state_d = PROPAGATE_ERROR;
                   ptw_stage_d = ptw_stage_q;
                 end

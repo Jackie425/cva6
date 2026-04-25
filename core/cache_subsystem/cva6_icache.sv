@@ -79,6 +79,13 @@ module cva6_icache
   logic cache_en_d, cache_en_q;  // cache is enabled
   logic [CVA6Cfg.VLEN-1:0] vaddr_d, vaddr_q;
   logic paddr_is_nc;  // asserted if physical address is non-cacheable
+  logic areq_fetch_req;
+  logic [CVA6Cfg.VLEN-1:0] areq_fetch_vaddr;
+  logic dreq_ready;
+  logic dreq_valid;
+  logic [CVA6Cfg.FETCH_WIDTH-1:0] dreq_data;
+  logic [CVA6Cfg.FETCH_USER_WIDTH-1:0] dreq_user;
+  logic [CVA6Cfg.VLEN-1:0] dreq_vaddr;
   logic [CVA6Cfg.ICACHE_SET_ASSOC-1:0] cl_hit;  // hit from tag compare
   logic cache_rden;  // triggers cache lookup
   logic cache_wren;  // triggers write to cacheline
@@ -146,8 +153,10 @@ module cva6_icache
 
   // latch this in case we have to stall later on
   // make sure this is 32bit aligned
-  assign vaddr_d = (dreq_o.ready & dreq_i.req) ? dreq_i.vaddr : vaddr_q;
-  assign areq_o.fetch_vaddr = (vaddr_q >> CVA6Cfg.FETCH_ALIGN_BITS) << CVA6Cfg.FETCH_ALIGN_BITS;
+  assign vaddr_d = (dreq_ready & dreq_i.req) ? dreq_i.vaddr : vaddr_q;
+  assign areq_fetch_vaddr = (vaddr_q >> CVA6Cfg.FETCH_ALIGN_BITS) << CVA6Cfg.FETCH_ALIGN_BITS;
+  assign areq_o.fetch_req = areq_fetch_req;
+  assign areq_o.fetch_vaddr = areq_fetch_vaddr;
 
   // split virtual address into index and offset to address cache arrays
   assign cl_index = vaddr_d[CVA6Cfg.ICACHE_INDEX_WIDTH-1:ICACHE_OFFSET_WIDTH];
@@ -155,7 +164,7 @@ module cva6_icache
 
   if (CVA6Cfg.NOCType == config_pkg::NOC_TYPE_AXI4_ATOP) begin : gen_axi_offset
     // if we generate a noncacheable access, the word will be at offset 0 or 4 in the cl coming from memory
-    assign cl_offset_d = ( dreq_o.ready & dreq_i.req)      ? (dreq_i.vaddr >> CVA6Cfg.FETCH_ALIGN_BITS) << CVA6Cfg.FETCH_ALIGN_BITS :
+    assign cl_offset_d = ( dreq_ready & dreq_i.req)        ? (dreq_i.vaddr >> CVA6Cfg.FETCH_ALIGN_BITS) << CVA6Cfg.FETCH_ALIGN_BITS :
                          ( paddr_is_nc  & mem_data_req_o ) ? {{ICACHE_OFFSET_WIDTH-1{1'b0}}, cl_offset_q[2]}<<2 : // needed since we transfer 32bit over a 64bit AXI bus in this case
         cl_offset_q;
     // request word address instead of cl address in case of NC access
@@ -164,7 +173,7 @@ module cva6_icache
   end else begin : gen_piton_offset
     // icache fills are either cachelines or 4byte fills, depending on whether they go to the Piton I/O space or not.
     // since the piton cache system replicates the data, we can always index the full CL
-    assign cl_offset_d = (dreq_o.ready & dreq_i.req) ? {dreq_i.vaddr >> 2, 2'b0} : cl_offset_q;
+    assign cl_offset_d = (dreq_ready & dreq_i.req) ? {dreq_i.vaddr >> 2, 2'b0} : cl_offset_q;
 
     // request word address instead of cl address in case of NC access
     assign mem_data_o.paddr = (paddr_is_nc) ? {cl_tag_d, vaddr_q[CVA6Cfg.ICACHE_INDEX_WIDTH-1:2], 2'b0} :                                         // align to 32bit
@@ -177,7 +186,12 @@ module cva6_icache
   assign mem_data_o.nc  = paddr_is_nc;
   // way that is being replaced
   assign mem_data_o.way = repl_way;
-  assign dreq_o.vaddr   = vaddr_q;
+  assign dreq_vaddr     = vaddr_q;
+  assign dreq_o.ready   = dreq_ready;
+  assign dreq_o.valid   = dreq_valid;
+  assign dreq_o.data    = dreq_data;
+  assign dreq_o.user    = dreq_user;
+  assign dreq_o.vaddr   = dreq_vaddr;
 
   // invalidations take two cycles
   assign inv_d          = inv_en;
@@ -201,9 +215,9 @@ module cva6_icache
     flush_d = flush_q | flush_i;  // register incoming flush
 
     // interfaces
-    dreq_o.ready = 1'b0;
-    areq_o.fetch_req = 1'b0;
-    dreq_o.valid = 1'b0;
+    dreq_ready = 1'b0;
+    areq_fetch_req = 1'b0;
+    dreq_valid = 1'b0;
     mem_data_req_o = 1'b0;
     // performance counter
     miss_o = 1'b0;
@@ -242,7 +256,7 @@ module cva6_icache
         end else begin
           // mem requests are for sure invals here
           if (!mem_rtrn_vld_i) begin
-            dreq_o.ready = 1'b1;
+            dreq_ready = 1'b1;
             // we have a new request
             if (dreq_i.req) begin
               cache_rden = 1'b1;
@@ -261,7 +275,7 @@ module cva6_icache
       // reuse the miss mechanism to handle
       // the request
       READ: begin
-        areq_o.fetch_req = '1;
+        areq_fetch_req = '1;
         // only enable tag comparison if cache is enabled
         cmp_en_d    = cache_en_q;
         // readout speculatively
@@ -273,14 +287,14 @@ module cva6_icache
             state_d = IDLE;
             // we have a hit or an exception output valid result
           end else if (((|cl_hit && cache_en_q) || areq_i.fetch_exception.valid) && !inv_q) begin
-            dreq_o.valid = ~dreq_i.kill_s2;  // just don't output in this case
+            dreq_valid = ~dreq_i.kill_s2;  // just don't output in this case
             state_d      = IDLE;
 
             // we can accept another request
             // and stay here, but only if no inval is coming in
             // note: we are not expecting ifill return packets here...
             if (!mem_rtrn_vld_i) begin
-              dreq_o.ready = 1'b1;
+              dreq_ready = 1'b1;
               if (dreq_i.req) begin
                 state_d = READ;
               end
@@ -320,7 +334,7 @@ module cva6_icache
           state_d = IDLE;
           // only return data if request is not being killed
           if (!(dreq_i.kill_s2 || flush_d)) begin
-            dreq_o.valid = 1'b1;
+            dreq_valid = 1'b1;
             // only write to cache if this address is cacheable
             cache_wren   = ~paddr_is_nc;
           end
@@ -334,7 +348,7 @@ module cva6_icache
       // wait until paddr is valid, and go
       // back to idle
       KILL_ATRANS: begin
-        areq_o.fetch_req = '1;
+        areq_fetch_req = '1;
         if (areq_i.fetch_valid) begin
           state_d = IDLE;
         end
@@ -440,11 +454,11 @@ module cva6_icache
 
   always_comb begin
     if (cmp_en_q) begin
-      dreq_o.data = cl_sel[hit_idx];
-      dreq_o.user = CVA6Cfg.FETCH_USER_EN ? cl_user[hit_idx] : '0;
+      dreq_data = cl_sel[hit_idx];
+      dreq_user = CVA6Cfg.FETCH_USER_EN ? cl_user[hit_idx] : '0;
     end else begin
-      dreq_o.data = mem_rtrn_i.data[{cl_offset_q, 3'b0}+:CVA6Cfg.FETCH_WIDTH];
-      dreq_o.user = CVA6Cfg.FETCH_USER_EN ? mem_rtrn_i.user[{cl_offset_q, 3'b0}+:CVA6Cfg.FETCH_USER_WIDTH] : '0;
+      dreq_data = mem_rtrn_i.data[{cl_offset_q, 3'b0}+:CVA6Cfg.FETCH_WIDTH];
+      dreq_user = CVA6Cfg.FETCH_USER_EN ? mem_rtrn_i.user[{cl_offset_q, 3'b0}+:CVA6Cfg.FETCH_USER_WIDTH] : '0;
     end
   end
 

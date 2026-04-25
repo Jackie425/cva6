@@ -128,6 +128,12 @@ module load_unit
   ldbuf_t    ldbuf_rdata;
   ldbuf_id_t ldbuf_rindex;
   ldbuf_id_t ldbuf_last_id_q;
+  logic req_port_data_req;
+  logic req_port_kill_req;
+  logic req_port_tag_valid;
+  logic [(CVA6Cfg.XLEN/8)-1:0] req_port_data_be;
+  logic [1:0] req_port_data_size;
+  logic ex_valid;
 
   assign ldbuf_full = &ldbuf_valid_q;
 
@@ -213,6 +219,11 @@ module load_unit
                                               CVA6Cfg.DCACHE_INDEX_WIDTH];
   // request id = index of the load buffer's entry
   assign req_port_o.data_id = ldbuf_windex;
+  assign req_port_o.data_req = req_port_data_req;
+  assign req_port_o.kill_req = req_port_kill_req;
+  assign req_port_o.tag_valid = req_port_tag_valid;
+  assign req_port_o.data_be = req_port_data_be;
+  assign req_port_o.data_size = req_port_data_size;
   // user field not used
   assign req_port_o.data_wuser = '0;
   // directly forward exception fields (valid bit is set below)
@@ -221,6 +232,7 @@ module load_unit
   assign ex_o.tval2 = CVA6Cfg.RVH ? ex_i.tval2 : '0;
   assign ex_o.tinst = CVA6Cfg.RVH ? ex_i.tinst : '0;
   assign ex_o.gva = CVA6Cfg.RVH ? ex_i.gva : 1'b0;
+  assign ex_o.valid = ex_valid;
 
   // Check that NI operations follow the necessary conditions
   logic paddr_ni;
@@ -243,12 +255,12 @@ module load_unit
     // default assignments
     state_d              = state_q;
     translation_req_o    = 1'b0;
-    req_port_o.data_req  = 1'b0;
+    req_port_data_req    = 1'b0;
     // tag control
-    req_port_o.kill_req  = 1'b0;
-    req_port_o.tag_valid = 1'b0;
-    req_port_o.data_be   = lsu_ctrl_i.be;
-    req_port_o.data_size = extract_transfer_size(lsu_ctrl_i.operation);
+    req_port_kill_req    = 1'b0;
+    req_port_tag_valid   = 1'b0;
+    req_port_data_be     = lsu_ctrl_i.be;
+    req_port_data_size   = extract_transfer_size(lsu_ctrl_i.operation);
     pop_ld_o             = 1'b0;
 
     // In IDLE and SEND_TAG states, this unit can accept a new load request
@@ -267,7 +279,7 @@ module load_unit
             // check if the page offset matches with a store, if it does then stall and wait
             if (!page_offset_matches_i) begin
               // make a load request to memory
-              req_port_o.data_req = 1'b1;
+              req_port_data_req = 1'b1;
               // we got no data grant so wait for the grant before sending the tag
               if (!req_port_i.data_gnt) begin
                 state_d = WAIT_GNT;
@@ -322,7 +334,7 @@ module load_unit
         // keep the translation request up
         translation_req_o   = 1'b1;
         // keep the request up
-        req_port_o.data_req = 1'b1;
+        req_port_data_req = 1'b1;
         // we finally got a data grant
         if (req_port_i.data_gnt) begin
           // so we send the tag in the next cycle
@@ -344,7 +356,7 @@ module load_unit
       end
       // we know for sure that the tag we want to send is valid
       SEND_TAG: begin
-        req_port_o.tag_valid = 1'b1;
+        req_port_tag_valid = 1'b1;
         state_d = IDLE;
 
         if (accept_req) begin
@@ -356,7 +368,7 @@ module load_unit
             // check if the page offset matches with a store, if it does stall and wait
             if (!page_offset_matches_i) begin
               // make a load request to memory
-              req_port_o.data_req = 1'b1;
+              req_port_data_req = 1'b1;
               // we got no data grant so wait for the grant before sending the tag
               if (!req_port_i.data_gnt) begin
                 state_d = WAIT_GNT;
@@ -389,15 +401,15 @@ module load_unit
         // ----------
         // if we got an exception we need to kill the request immediately
         if (ex_i.valid) begin
-          req_port_o.kill_req = 1'b1;
+          req_port_kill_req = 1'b1;
         end
       end
 
       WAIT_FLUSH: begin
         // the D$ arbiter will take care of presenting this to the memory only in case we
         // have an outstanding request
-        req_port_o.kill_req = 1'b1;
-        req_port_o.tag_valid = 1'b1;
+        req_port_kill_req = 1'b1;
+        req_port_tag_valid = 1'b1;
         // we've killed the current request so we can go back to idle
         state_d = IDLE;
       end
@@ -407,13 +419,13 @@ module load_unit
         // we are here because of a TLB miss, we need to abort the current request and give way for the
         // PTW walker to satisfy the TLB miss
         if (state_q == ABORT_TRANSACTION && CVA6Cfg.MmuPresent) begin
-          req_port_o.kill_req = 1'b1;
-          req_port_o.tag_valid = 1'b1;
+          req_port_kill_req = 1'b1;
+          req_port_tag_valid = 1'b1;
           // wait until the WB is empty
           state_d = WAIT_TRANSLATION;
         end else if (state_q == ABORT_TRANSACTION_NI && CVA6Cfg.NonIdemPotenceEn) begin
-          req_port_o.kill_req = 1'b1;
-          req_port_o.tag_valid = 1'b1;
+          req_port_kill_req = 1'b1;
+          req_port_tag_valid = 1'b1;
           // re-do the request
           state_d = WAIT_WB_EMPTY;
         end else if (state_q == WAIT_WB_EMPTY && CVA6Cfg.NonIdemPotenceEn && dcache_wbuffer_not_ni_i) begin
@@ -445,7 +457,7 @@ module load_unit
   end
 
   // track the load data for later usage
-  assign ldbuf_w = req_port_o.data_req & req_port_i.data_gnt;
+  assign ldbuf_w = req_port_data_req & req_port_i.data_gnt;
 
   // ---------------
   // Retire Load
@@ -459,18 +471,18 @@ module load_unit
     ldbuf_r    = req_port_i.data_rvalid;
     trans_id_o = ldbuf_q[ldbuf_rindex].trans_id;
     valid_o    = 1'b0;
-    ex_o.valid = 1'b0;
+    ex_valid   = 1'b0;
 
     // we got an rvalid and its corresponding request was not flushed
     if (req_port_i.data_rvalid && !ldbuf_flushed_q[ldbuf_rindex]) begin
       // if the response corresponds to the last request, check that we are not killing it
-      if ((ldbuf_last_id_q != ldbuf_rindex) || !req_port_o.kill_req) valid_o = 1'b1;
+      if ((ldbuf_last_id_q != ldbuf_rindex) || !req_port_kill_req) valid_o = 1'b1;
       // the output is also valid if we got an exception. An exception arrives one cycle after
       // dtlb_hit_i is asserted, i.e. when we are in SEND_TAG. Otherwise, the exception
       // corresponds to the next request that is already being translated (see below).
       if (ex_i.valid && (state_q == SEND_TAG)) begin
         valid_o    = 1'b1;
-        ex_o.valid = 1'b1;
+        ex_valid   = 1'b1;
       end
     end
 
@@ -481,14 +493,14 @@ module load_unit
     if ((CVA6Cfg.MmuPresent || CVA6Cfg.NonIdemPotenceEn) && (state_q == WAIT_TRANSLATION) && !req_port_i.data_rvalid && ex_i.valid && valid_i) begin
       trans_id_o = lsu_ctrl_i.trans_id;
       valid_o = 1'b1;
-      ex_o.valid = 1'b1;
+      ex_valid = 1'b1;
     end
 
     // raise valid when removing a misspredicted speculative load
     if (CVA6Cfg.SpeculativeSb && (state_q == WAIT_SPEC_LOAD) && lsu_ctrl_i.is_speculative_load_miss && !req_port_i.data_rvalid && valid_i) begin
       trans_id_o = lsu_ctrl_i.trans_id;
       valid_o = 1'b1;
-      ex_o.valid = 1'b0;
+      ex_valid = 1'b0;
     end
   end
 
