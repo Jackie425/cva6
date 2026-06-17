@@ -46,17 +46,6 @@ module ariane_regfile #(
   localparam NUM_WORDS = 2 ** ADDR_WIDTH;
 
   logic [            NUM_WORDS-1:0][DATA_WIDTH-1:0] mem;
-  logic [CVA6Cfg.NrCommitPorts-1:0][ NUM_WORDS-1:0] we_dec;
-
-
-  always_comb begin : we_decoder
-    for (int unsigned j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin
-      for (int unsigned i = 0; i < NUM_WORDS; i++) begin
-        if (waddr_i[j] == i) we_dec[j][i] = we_i[j];
-        else we_dec[j][i] = 1'b0;
-      end
-    end
-  end
 
   // loop from 1 to NUM_WORDS-1 as R0 is nil
   always_ff @(posedge clk_i, negedge rst_ni) begin : register_write_behavioral
@@ -64,10 +53,8 @@ module ariane_regfile #(
       mem <= '{default: '0};
     end else begin
       for (int unsigned j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin
-        for (int unsigned i = 0; i < NUM_WORDS; i++) begin
-          if (we_dec[j][i]) begin
-            mem[i] <= wdata_i[j];
-          end
+        if (we_i[j]) begin
+          mem[waddr_i[j]] <= wdata_i[j];
         end
         if (ZERO_REG_ZERO) begin
           mem[0] <= '0;

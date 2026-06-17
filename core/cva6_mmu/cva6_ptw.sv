@@ -231,6 +231,7 @@ module cva6_ptw
     // output the correct ASIDs
     shared_tlb_update_o.asid = tlb_update_asid_q;
     shared_tlb_update_o.vmid = CVA6Cfg.RVH ? tlb_update_vmid_q : '0;
+    shared_tlb_update_o.v_st_enbl = '0;
     shared_tlb_update_o.vpn = vaddr_q[12+CVA6Cfg.VpnLen-1:12];
 
     bad_paddr_o = ptw_access_exception_o ? ptw_pptr_q : 'b0;
