@@ -79,6 +79,12 @@ module cva6_icache
   logic cache_en_d, cache_en_q;  // cache is enabled
   logic [CVA6Cfg.VLEN-1:0] vaddr_d, vaddr_q;
   logic paddr_is_nc;  // asserted if physical address is non-cacheable
+  logic mem_data_req_d, mem_data_req_q;
+  logic mem_data_req_active;
+  logic mem_data_nc_d, mem_data_nc_q, mem_data_nc;
+  logic [CVA6Cfg.ICACHE_TAG_WIDTH-1:0] mem_data_tag_d, mem_data_tag_q, mem_data_tag;
+  logic [CVA6Cfg.VLEN-1:0] mem_data_vaddr_d, mem_data_vaddr_q, mem_data_vaddr;
+  logic [CVA6Cfg.ICACHE_SET_ASSOC_WIDTH-1:0] mem_data_way_d, mem_data_way_q, mem_data_way;
   logic areq_fetch_req;
   logic [CVA6Cfg.VLEN-1:0] areq_fetch_vaddr;
   logic dreq_ready;
@@ -147,6 +153,10 @@ module cva6_icache
   assign paddr_is_nc = (~cache_en_q) | (~config_pkg::is_inside_cacheable_regions(
       CVA6Cfg, {{64 - CVA6Cfg.PLEN{1'b0}}, cl_tag_d, {CVA6Cfg.ICACHE_INDEX_WIDTH{1'b0}}}
   ));
+  assign mem_data_nc = mem_data_req_q ? mem_data_nc_q : paddr_is_nc;
+  assign mem_data_tag = mem_data_req_q ? mem_data_tag_q : cl_tag_d;
+  assign mem_data_vaddr = mem_data_req_q ? mem_data_vaddr_q : vaddr_q;
+  assign mem_data_way = mem_data_req_q ? mem_data_way_q : repl_way;
 
   // pass exception through
   assign dreq_o.ex = areq_i.fetch_exception;
@@ -165,27 +175,27 @@ module cva6_icache
   if (CVA6Cfg.NOCType == config_pkg::NOC_TYPE_AXI4_ATOP) begin : gen_axi_offset
     // if we generate a noncacheable access, the word will be at offset 0 or 4 in the cl coming from memory
     assign cl_offset_d = ( dreq_ready & dreq_i.req)        ? (dreq_i.vaddr >> CVA6Cfg.FETCH_ALIGN_BITS) << CVA6Cfg.FETCH_ALIGN_BITS :
-                         ( paddr_is_nc  & mem_data_req_o ) ? {{ICACHE_OFFSET_WIDTH-1{1'b0}}, cl_offset_q[2]}<<2 : // needed since we transfer 32bit over a 64bit AXI bus in this case
+                         ( mem_data_nc  & mem_data_req_active ) ? {{ICACHE_OFFSET_WIDTH-1{1'b0}}, cl_offset_q[2]}<<2 : // needed since we transfer 32bit over a 64bit AXI bus in this case
         cl_offset_q;
     // request word address instead of cl address in case of NC access
-    assign mem_data_o.paddr = (paddr_is_nc) ? {cl_tag_d, vaddr_q[CVA6Cfg.ICACHE_INDEX_WIDTH-1:3], 3'b0} :                                         // align to 64bit
-        {cl_tag_d, vaddr_q[CVA6Cfg.ICACHE_INDEX_WIDTH-1:ICACHE_OFFSET_WIDTH], {ICACHE_OFFSET_WIDTH{1'b0}}}; // align to cl
+    assign mem_data_o.paddr = (mem_data_nc) ? {mem_data_tag, mem_data_vaddr[CVA6Cfg.ICACHE_INDEX_WIDTH-1:3], 3'b0} :                                         // align to 64bit
+        {mem_data_tag, mem_data_vaddr[CVA6Cfg.ICACHE_INDEX_WIDTH-1:ICACHE_OFFSET_WIDTH], {ICACHE_OFFSET_WIDTH{1'b0}}}; // align to cl
   end else begin : gen_piton_offset
     // icache fills are either cachelines or 4byte fills, depending on whether they go to the Piton I/O space or not.
     // since the piton cache system replicates the data, we can always index the full CL
     assign cl_offset_d = (dreq_ready & dreq_i.req) ? {dreq_i.vaddr >> 2, 2'b0} : cl_offset_q;
 
     // request word address instead of cl address in case of NC access
-    assign mem_data_o.paddr = (paddr_is_nc) ? {cl_tag_d, vaddr_q[CVA6Cfg.ICACHE_INDEX_WIDTH-1:2], 2'b0} :                                         // align to 32bit
-        {cl_tag_d, vaddr_q[CVA6Cfg.ICACHE_INDEX_WIDTH-1:ICACHE_OFFSET_WIDTH], {ICACHE_OFFSET_WIDTH{1'b0}}}; // align to cl
+    assign mem_data_o.paddr = (mem_data_nc) ? {mem_data_tag, mem_data_vaddr[CVA6Cfg.ICACHE_INDEX_WIDTH-1:2], 2'b0} :                                         // align to 32bit
+        {mem_data_tag, mem_data_vaddr[CVA6Cfg.ICACHE_INDEX_WIDTH-1:ICACHE_OFFSET_WIDTH], {ICACHE_OFFSET_WIDTH{1'b0}}}; // align to cl
   end
 
 
   assign mem_data_o.tid = RdTxId;
 
-  assign mem_data_o.nc  = paddr_is_nc;
+  assign mem_data_o.nc  = mem_data_nc;
   // way that is being replaced
-  assign mem_data_o.way = repl_way;
+  assign mem_data_o.way = mem_data_way;
   assign dreq_vaddr     = vaddr_q;
   assign dreq_o.ready   = dreq_ready;
   assign dreq_o.valid   = dreq_valid;
@@ -203,9 +213,29 @@ module cva6_icache
   assign addr_ni = config_pkg::is_inside_nonidempotent_regions(
       CVA6Cfg, {{64 - CVA6Cfg.PLEN{1'b0}}, areq_i.fetch_paddr}
   );
+  logic flush_pending;
+  logic fetch_valid_qualified;
+  logic fetch_exception_valid;
+  logic read_hit_or_exception;
+  logic read_miss_req;
+  assign flush_pending = flush_q | flush_i;
+  assign fetch_valid_qualified = areq_i.fetch_valid &&
+      (!dreq_i.spec || ((CVA6Cfg.NonIdemPotenceEn && !addr_ni) || (!CVA6Cfg.NonIdemPotenceEn)));
+  assign fetch_exception_valid = areq_i.fetch_exception.valid;
+  assign read_hit_or_exception = (((|cl_hit && cache_en_q) || fetch_exception_valid) &&
+      !inv_q);
+  assign read_miss_req = (state_q == READ) && fetch_valid_qualified && !flush_pending &&
+      !read_hit_or_exception && !dreq_i.kill_s2 && !inv_q && !mem_data_req_q;
+  assign mem_data_req_active = mem_data_req_q && !flush_pending && !dreq_i.kill_s2 && !inv_q;
+  assign mem_data_req_o = mem_data_req_active;
   always_comb begin : p_fsm
     // default assignment
     state_d = state_q;
+    mem_data_req_d = mem_data_req_q;
+    mem_data_nc_d = mem_data_nc_q;
+    mem_data_tag_d = mem_data_tag_q;
+    mem_data_vaddr_d = mem_data_vaddr_q;
+    mem_data_way_d = mem_data_way_q;
     cache_en_d   = cache_en_q & en_i;// disabling the cache is always possible, enable needs to go via flush
     flush_en = 1'b0;
     cmp_en_d = 1'b0;
@@ -218,7 +248,6 @@ module cva6_icache
     dreq_ready = 1'b0;
     areq_fetch_req = 1'b0;
     dreq_valid = 1'b0;
-    mem_data_req_o = 1'b0;
     // performance counter
     miss_o = 1'b0;
 
@@ -281,12 +310,22 @@ module cva6_icache
         // readout speculatively
         cache_rden  = cache_en_q;
 
-        if (areq_i.fetch_valid && (!dreq_i.spec || ((CVA6Cfg.NonIdemPotenceEn && !addr_ni) || (!CVA6Cfg.NonIdemPotenceEn)))) begin
+        if (mem_data_req_q) begin
+          cmp_en_d = 1'b0;
+          if (flush_d || dreq_i.kill_s2) begin
+            mem_data_req_d = 1'b0;
+            state_d = IDLE;
+          end else if (!inv_q && mem_data_ack_i) begin
+            mem_data_req_d = 1'b0;
+            miss_o = ~mem_data_nc_q;
+            state_d = MISS;
+          end
+        end else if (fetch_valid_qualified) begin
           // check if we have to flush
           if (flush_d) begin
             state_d = IDLE;
             // we have a hit or an exception output valid result
-          end else if (((|cl_hit && cache_en_q) || areq_i.fetch_exception.valid) && !inv_q) begin
+          end else if (((|cl_hit && cache_en_q) || fetch_exception_valid) && !inv_q) begin
             dreq_valid = ~dreq_i.kill_s2;  // just don't output in this case
             state_d      = IDLE;
 
@@ -307,16 +346,16 @@ module cva6_icache
             // we have a miss / NC transaction
           end else if (dreq_i.kill_s2) begin
             state_d = IDLE;
-          end else if (!inv_q) begin
+          end else if (read_miss_req) begin
             cmp_en_d = 1'b0;
             // only count this as a miss if the cache is enabled, and
             // the address is cacheable
             // send out ifill request
-            mem_data_req_o = 1'b1;
-            if (mem_data_ack_i) begin
-              miss_o  = ~paddr_is_nc;
-              state_d = MISS;
-            end
+            mem_data_req_d = 1'b1;
+            mem_data_nc_d = paddr_is_nc;
+            mem_data_tag_d = cl_tag_d;
+            mem_data_vaddr_d = vaddr_q;
+            mem_data_way_d = repl_way;
           end
           // bail out if this request is being killed (and we missed on the TLB)
         end else if (dreq_i.kill_s2 || flush_d) begin
@@ -336,7 +375,7 @@ module cva6_icache
           if (!(dreq_i.kill_s2 || flush_d)) begin
             dreq_valid = 1'b1;
             // only write to cache if this address is cacheable
-            cache_wren   = ~paddr_is_nc;
+            cache_wren   = ~mem_data_nc_q;
           end
           // bail out if this request is being killed
         end else if (dreq_i.kill_s2 || flush_d) begin
@@ -530,6 +569,11 @@ module cva6_icache
       cl_offset_q   <= '0;
       repl_way_oh_q <= '0;
       inv_q         <= '0;
+      mem_data_req_q <= '0;
+      mem_data_nc_q <= '0;
+      mem_data_tag_q <= '0;
+      mem_data_vaddr_q <= '0;
+      mem_data_way_q <= '0;
     end else begin
       cl_tag_q      <= cl_tag_d;
       flush_cnt_q   <= flush_cnt_d;
@@ -541,6 +585,11 @@ module cva6_icache
       cl_offset_q   <= cl_offset_d;
       repl_way_oh_q <= repl_way_oh_d;
       inv_q         <= inv_d;
+      mem_data_req_q <= mem_data_req_d;
+      mem_data_nc_q <= mem_data_nc_d;
+      mem_data_tag_q <= mem_data_tag_d;
+      mem_data_vaddr_q <= mem_data_vaddr_d;
+      mem_data_way_q <= mem_data_way_d;
     end
   end
 

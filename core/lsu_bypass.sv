@@ -65,15 +65,11 @@ module lsu_bypass
   assign ready_o = empty;
 
   always_comb begin
-    automatic logic [1:0] status_cnt;
-    automatic logic write_pointer;
-    automatic logic read_pointer;
-
-    status_cnt = status_cnt_q;
-    write_pointer = write_pointer_q;
-    read_pointer = read_pointer_q;
-
     mem_n = mem_q;
+    status_cnt_n = status_cnt_q;
+    write_pointer_n = write_pointer_q;
+    read_pointer_n = read_pointer_q;
+
     // we've got a valid LSU request
     if (lsu_req_valid_i) begin
       mem_n[write_pointer_q] = lsu_req_i;
@@ -86,36 +82,32 @@ module lsu_bypass
           mem_n[write_pointer_q].is_speculative_load = 1'b0;
         end
       end
-      write_pointer++;
-      status_cnt++;
+      write_pointer_n = ~write_pointer_n;
+      status_cnt_n++;
     end
 
     if (pop_ld_i) begin
       // invalidate the result
       mem_n[read_pointer_q].valid = 1'b0;
-      read_pointer++;
-      status_cnt--;
+      read_pointer_n = ~read_pointer_n;
+      status_cnt_n--;
     end
 
     if (pop_st_i) begin
       // invalidate the result
       mem_n[read_pointer_q].valid = 1'b0;
-      read_pointer++;
-      status_cnt--;
+      read_pointer_n = ~read_pointer_n;
+      status_cnt_n--;
     end
 
     if (pop_st_i && pop_ld_i) mem_n = '0;
 
     if (flush_i) begin
-      status_cnt = '0;
-      write_pointer = '0;
-      read_pointer = '0;
+      status_cnt_n = '0;
+      write_pointer_n = '0;
+      read_pointer_n = '0;
       mem_n = '0;
     end
-    // default assignments
-    read_pointer_n  = read_pointer;
-    write_pointer_n = write_pointer;
-    status_cnt_n    = status_cnt;
   end
 
   // output assignment
@@ -142,4 +134,3 @@ module lsu_bypass
     end
   end
 endmodule
-

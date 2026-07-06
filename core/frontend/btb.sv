@@ -148,10 +148,9 @@ module btb #(
 
     // typedef for all branch target entries
     // we may want to try to put a tag field that fills the rest of the PC in-order to mitigate aliasing effects
-    btb_prediction_t
-        btb_d[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0],
-        btb_q[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0],
-        btb_flush_q[NR_ROWS-1:0][CVA6Cfg.INSTR_PER_FETCH-1:0];
+    typedef btb_prediction_t btb_row_t[CVA6Cfg.INSTR_PER_FETCH];
+    typedef btb_row_t btb_mem_t[NR_ROWS];
+    btb_mem_t btb_d, btb_q, btb_flush_q;
 
     // output matching prediction
     for (genvar i = 0; i < CVA6Cfg.INSTR_PER_FETCH; i++) begin : gen_btb_output
@@ -183,7 +182,7 @@ module btb #(
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) begin
         // Bias the branches to be taken upon first arrival
-        btb_q <= '{default: '0};
+        btb_q <= btb_mem_t'{default: btb_row_t'{default: btb_prediction_t'{default: '0}}};
       end else begin
         // evict all entries
         if (flush_bp_i) begin

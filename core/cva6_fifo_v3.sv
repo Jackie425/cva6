@@ -41,6 +41,7 @@ module cva6_fifo_v3 #(
   // local parameter
   // FIFO depth - handle the case of pass-through, synthesizer will do constant propagation
   localparam int unsigned FifoDepth = (DEPTH > 0) ? DEPTH : 1;
+  localparam bit UseFpgaQueue = FPGA_EN && (DEPTH > 1);
   // clock gating control
   logic gate_clock;
   // pointer to the read and write section of the queue
@@ -77,9 +78,9 @@ module cva6_fifo_v3 #(
     read_pointer_n  = read_pointer_q;
     write_pointer_n = write_pointer_q;
     status_cnt_n    = status_cnt_q;
-    if (FPGA_EN && FPGA_ALTERA) data_ft_n = data_ft_q;
-    if (FPGA_EN && FPGA_ALTERA) first_word_n = first_word_q;
-    if (FPGA_EN) begin
+    if (UseFpgaQueue && FPGA_ALTERA) data_ft_n = data_ft_q;
+    if (UseFpgaQueue && FPGA_ALTERA) first_word_n = first_word_q;
+    if (UseFpgaQueue) begin
       fifo_ram_we            = '0;
       fifo_ram_write_address = '0;
       fifo_ram_wdata         = '0;
@@ -97,7 +98,7 @@ module cva6_fifo_v3 #(
 
     // push a new element to the queue
     if (push_i && ~full_o) begin
-      if (FPGA_EN) begin
+      if (UseFpgaQueue) begin
         fifo_ram_we = 1'b1;
         fifo_ram_write_address = write_pointer_q;
         fifo_ram_wdata = data_i;
@@ -118,7 +119,7 @@ module cva6_fifo_v3 #(
 
     if (pop_i && ~empty_o) begin
       data_ft_n = data_i;
-      if (FPGA_EN && FPGA_ALTERA) first_word_n = first_word_q && push_i;
+      if (UseFpgaQueue && FPGA_ALTERA) first_word_n = first_word_q && push_i;
       // read from the queue is a default assignment
       // but increment the read pointer...
       if (read_pointer_n == FifoDepth[ADDR_DEPTH-1:0] - 1) read_pointer_n = '0;
@@ -131,9 +132,9 @@ module cva6_fifo_v3 #(
     if (push_i && pop_i && ~full_o && ~empty_o) status_cnt_n = status_cnt_q;
 
     // FIFO is in pass through mode -> do not change the pointers
-    if ((FALL_THROUGH || (FPGA_EN && FPGA_ALTERA)) && (status_cnt_q == 0) && push_i) begin
+    if ((FALL_THROUGH || (UseFpgaQueue && FPGA_ALTERA)) && (status_cnt_q == 0) && push_i) begin
       if (FALL_THROUGH) data_o = data_i;
-      if (FPGA_EN && FPGA_ALTERA) begin
+      if (UseFpgaQueue && FPGA_ALTERA) begin
         data_ft_n = data_i;
         first_word_n = '1;
       end
@@ -145,7 +146,7 @@ module cva6_fifo_v3 #(
       end
     end
 
-    if (FPGA_EN) fifo_ram_read_address = (FPGA_ALTERA == 1) ? read_pointer_n : read_pointer_q;
+    if (UseFpgaQueue) fifo_ram_read_address = (FPGA_ALTERA == 1) ? read_pointer_n : read_pointer_q;
     else fifo_ram_read_address = '0;
 
   end
@@ -156,26 +157,26 @@ module cva6_fifo_v3 #(
       read_pointer_q  <= '0;
       write_pointer_q <= '0;
       status_cnt_q    <= '0;
-      if (FPGA_ALTERA) first_word_q <= '0;
-      if (FPGA_ALTERA) data_ft_q <= '0;
+      if (UseFpgaQueue && FPGA_ALTERA) first_word_q <= '0;
+      if (UseFpgaQueue && FPGA_ALTERA) data_ft_q <= '0;
     end else begin
       if (flush_i) begin
         read_pointer_q  <= '0;
         write_pointer_q <= '0;
         status_cnt_q    <= '0;
-        if (FPGA_ALTERA) first_word_q <= '0;
-        if (FPGA_ALTERA) data_ft_q <= '0;
+        if (UseFpgaQueue && FPGA_ALTERA) first_word_q <= '0;
+        if (UseFpgaQueue && FPGA_ALTERA) data_ft_q <= '0;
       end else begin
         read_pointer_q  <= read_pointer_n;
         write_pointer_q <= write_pointer_n;
         status_cnt_q    <= status_cnt_n;
-        if (FPGA_ALTERA) data_ft_q <= data_ft_n;
-        if (FPGA_ALTERA) first_word_q <= first_word_n;
+        if (UseFpgaQueue && FPGA_ALTERA) data_ft_q <= data_ft_n;
+        if (UseFpgaQueue && FPGA_ALTERA) first_word_q <= first_word_n;
       end
     end
   end
 
-  if (FPGA_EN) begin : gen_fpga_queue
+  if (UseFpgaQueue) begin : gen_fpga_queue
     if (FPGA_ALTERA) begin
       SyncDpRam_ind_r_w #(
           .ADDR_WIDTH(ADDR_DEPTH),

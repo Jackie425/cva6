@@ -106,7 +106,7 @@ module bht #(
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) begin
-        bht_q <= '{default: '0};
+        bht_q <= bht_mem_t'{default: bht_row_t'{default: bht_entry_t'{default: '0}}};
       end else begin
         // evict all entries
         if (flush_bp_i) begin

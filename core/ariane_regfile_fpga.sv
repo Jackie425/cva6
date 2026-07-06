@@ -62,72 +62,98 @@ module ariane_regfile_fpga #(
   logic [NR_READ_PORTS-1:0][4:0] raddr_q;
   logic [NR_READ_PORTS-1:0][4:0] raddr;
 
-  // write address decoder (for block selector)
-  always_comb begin
-    for (int unsigned j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin
-      for (int unsigned i = 0; i < NUM_WORDS; i++) begin
-        if (waddr_i[j] == i) begin
-          we_dec[j][i] = we_i[j];
-        end else begin
-          we_dec[j][i] = 1'b0;
-        end
-      end
+  // Write address decoder for the block selector.
+  for (genvar j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin : gen_we_dec_port
+    for (genvar i = 0; i < NUM_WORDS; i++) begin : gen_we_dec_word
+      assign we_dec[j][i] = (waddr_i[j] == ADDR_WIDTH'(i)) ? we_i[j] : 1'b0;
     end
   end
 
-  // update block selector:
-  // signal mem_block_sel records where the current valid value is stored.
-  // if multiple ports try to write to the same address simultaneously, the port with the highest
-  // index has priority.
-  always_comb begin
-    mem_block_sel = mem_block_sel_q;
-    for (int i = 0; i < NUM_WORDS; i++) begin
-      for (int j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin
-        if (we_dec[j][i] == 1'b1) begin
-          mem_block_sel[i] = LOG_NR_WRITE_PORTS'(j);
+  // Track which duplicated RAM block currently stores each architectural
+  // register.  The two-port specialization matches CVA6Cfg.NrCommitPorts=2 and
+  // gives the higher write port priority when both ports write the same word.
+  if (CVA6Cfg.NrCommitPorts == 1) begin : gen_block_sel_one_port
+    for (genvar i = 0; i < NUM_WORDS; i++) begin : gen_block_sel_word
+      assign mem_block_sel[i] = '0;
+    end
+  end else if (CVA6Cfg.NrCommitPorts == 2) begin : gen_block_sel_two_ports
+    for (genvar i = 0; i < NUM_WORDS; i++) begin : gen_block_sel_word
+      assign mem_block_sel[i] = we_dec[1][i] ? LOG_NR_WRITE_PORTS'(1) :
+                                we_dec[0][i] ? LOG_NR_WRITE_PORTS'(0) :
+                                               mem_block_sel_q[i];
+    end
+  end else begin : gen_block_sel_multi_ports
+    always_comb begin
+      mem_block_sel = mem_block_sel_q;
+      for (int i = 0; i < NUM_WORDS; i++) begin
+        for (int j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin
+          if (we_dec[j][i] == 1'b1) begin
+            mem_block_sel[i] = LOG_NR_WRITE_PORTS'(j);
+          end
         end
       end
-    end
-  end
-
-  // block selector flops
-  always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni) begin
-      mem_block_sel_q <= '0;
-      raddr_q <= '0;
-    end else begin
-      mem_block_sel_q <= mem_block_sel;
-      if (CVA6Cfg.FpgaAlteraEn) raddr_q <= raddr_i;
-      else raddr_q <= '0;
     end
   end
 
   // distributed RAM blocks
   logic [NR_READ_PORTS-1:0][DATA_WIDTH-1:0] mem_read[CVA6Cfg.NrCommitPorts];
   logic [NR_READ_PORTS-1:0][DATA_WIDTH-1:0] mem_read_sync[CVA6Cfg.NrCommitPorts];
-  for (genvar j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin : regfile_ram_block
-    always_ff @(posedge clk_i) begin
-      if (we_i[j] && ~waddr_i[j] != 0) begin
-        mem[j][waddr_i[j]] <= wdata_i[j];
-        if (CVA6Cfg.FpgaAlteraEn)
-          wdata_reg[j] <= wdata_i[j];  // register data written in case is needed to read next cycle
-        else wdata_reg[j] <= '0;
+
+  if (CVA6Cfg.FpgaAlteraEn) begin : gen_altera_regfile
+    // block selector flops
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni) begin
+        mem_block_sel_q <= '0;
+        raddr_q <= '0;
+      end else begin
+        mem_block_sel_q <= mem_block_sel;
+        raddr_q <= raddr_i;
       end
-      if (CVA6Cfg.FpgaAlteraEn) begin
+    end
+
+    for (genvar j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin : regfile_ram_block
+      always_ff @(posedge clk_i) begin
+        if (we_i[j] && ~waddr_i[j] != 0) begin
+          mem[j][waddr_i[j]] <= wdata_i[j];
+          wdata_reg[j] <= wdata_i[j];  // register data written in case it is read next cycle
+        end
         for (int k = 0; k < NR_READ_PORTS; k++) begin : block_read
           mem_read_sync[j][k] = mem[j][raddr_i[k]];  // synchronous RAM
           read_after_write[k] <= '0;
           if (waddr_i[j] == raddr_i[k])
-            read_after_write[k] <= we_i[j] && ~waddr_i[j] != 0; // Identify if we need to read the content that was written
+            read_after_write[k] <= we_i[j] && ~waddr_i[j] != 0;  // read newly-written data
         end
       end
+      for (genvar k = 0; k < NR_READ_PORTS; k++) begin : block_read
+        assign mem_read[j][k] = read_after_write[k] ? wdata_reg[j] : mem_read_sync[j][k];
+      end
     end
-    for (genvar k = 0; k < NR_READ_PORTS; k++) begin : block_read
-      assign mem_read[j][k] = CVA6Cfg.FpgaAlteraEn ? ( read_after_write[k] ? wdata_reg[j]: mem_read_sync[j][k]) : mem[j][raddr_i[k]];
+
+    // with synchronous RAM there is the need to adjust which address is used at the output MUX
+    assign raddr = raddr_q;
+  end else begin : gen_async_regfile
+    // block selector flops
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (!rst_ni) begin
+        mem_block_sel_q <= '0;
+      end else begin
+        mem_block_sel_q <= mem_block_sel;
+      end
     end
+
+    for (genvar j = 0; j < CVA6Cfg.NrCommitPorts; j++) begin : regfile_ram_block
+      always_ff @(posedge clk_i) begin
+        if (we_i[j] && ~waddr_i[j] != 0) begin
+          mem[j][waddr_i[j]] <= wdata_i[j];
+        end
+      end
+      for (genvar k = 0; k < NR_READ_PORTS; k++) begin : block_read
+        assign mem_read[j][k] = mem[j][raddr_i[k]];
+      end
+    end
+
+    assign raddr = raddr_i;
   end
-  //with synchronous ram there is the need to adjust which address is used at the output MUX
-  assign raddr = CVA6Cfg.FpgaAlteraEn ? raddr_q : raddr_i;
 
   // output MUX
   logic [NR_READ_PORTS-1:0][LOG_NR_WRITE_PORTS-1:0] block_addr;
@@ -137,6 +163,7 @@ module ariane_regfile_fpga #(
   end
 
   // random initialization of the memory to suppress assert warnings on Questa.
+`ifndef PCOV_NO_RANDOM_INIT
   initial begin
     for (int i = 0; i < CVA6Cfg.NrCommitPorts; i++) begin
       for (int j = 0; j < NUM_WORDS; j++) begin
@@ -146,5 +173,6 @@ module ariane_regfile_fpga #(
       end
     end
   end
+`endif
 
 endmodule
