@@ -369,12 +369,14 @@ module id_stage #(
   // ------------------
   // 3. Pipeline Register
   // ------------------
-  for (genvar i = 0; i < CVA6Cfg.NrIssuePorts; i++) begin
-    assign issue_entry_o[i] = issue_q[i].sbe;
-    assign issue_entry_o_prev[i] = CVA6Cfg.FpgaAlteraEn ? issue_n[i].sbe : '0;
-    assign issue_entry_valid_o[i] = issue_q[i].valid;
-    assign is_ctrl_flow_o[i] = issue_q[i].is_ctrl_flow;
-    assign orig_instr_o[i] = issue_q[i].orig_instr;
+  always_comb begin
+    for (int unsigned i = 0; i < CVA6Cfg.NrIssuePorts; i++) begin
+      issue_entry_o[i] = issue_q[i].sbe;
+      issue_entry_o_prev[i] = CVA6Cfg.FpgaAlteraEn ? issue_n[i].sbe : '0;
+      issue_entry_valid_o[i] = issue_q[i].valid;
+      is_ctrl_flow_o[i] = issue_q[i].is_ctrl_flow;
+      orig_instr_o[i] = issue_q[i].orig_instr;
+    end
   end
 
   if (CVA6Cfg.SuperscalarEn) begin

@@ -21,13 +21,13 @@ module wt_axi_adapter
     parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty,
     parameter int unsigned ReqFifoDepth = 2,
     parameter int unsigned MetaFifoDepth = CVA6Cfg.DCACHE_MAX_TX,
-    parameter type axi_req_t = logic,
-    parameter type axi_rsp_t = logic,
-    parameter type dcache_req_t = logic,
-    parameter type dcache_rtrn_t = logic,
-    parameter type dcache_inval_t = logic,
-    parameter type icache_req_t = logic,
-    parameter type icache_rtrn_t = logic
+    parameter int unsigned AxiReqWidth = 1,
+    parameter int unsigned AxiRespWidth = 1,
+    parameter int unsigned DcacheReqWidth = 1,
+    parameter int unsigned DcacheRtrnWidth = 1,
+    parameter int unsigned DcacheInvalWidth = 1,
+    parameter int unsigned IcacheReqWidth = CVA6Cfg.ICACHE_SET_ASSOC_WIDTH + CVA6Cfg.PLEN + 1 + CVA6Cfg.MEM_TID_WIDTH,
+    parameter int unsigned IcacheRtrnWidth = $bits(wt_cache_pkg::icache_in_t) + CVA6Cfg.ICACHE_LINE_WIDTH + CVA6Cfg.ICACHE_USER_LINE_WIDTH + 1 + 1 + CVA6Cfg.ICACHE_INDEX_WIDTH + CVA6Cfg.ICACHE_SET_ASSOC_WIDTH + CVA6Cfg.MEM_TID_WIDTH
 ) (
     input logic clk_i,
     input logic rst_ni,
@@ -35,22 +35,22 @@ module wt_axi_adapter
     // icache
     input  logic         icache_data_req_i,
     output logic         icache_data_ack_o,
-    input  icache_req_t  icache_data_i,
+    input  logic [IcacheReqWidth-1:0] icache_data_i_flat,
     // returning packets must be consumed immediately
     output logic         icache_rtrn_vld_o,
-    output icache_rtrn_t icache_rtrn_o,
+    output logic [IcacheRtrnWidth-1:0] icache_rtrn_o_flat,
 
     // dcache
     input  logic         dcache_data_req_i,
     output logic         dcache_data_ack_o,
-    input  dcache_req_t  dcache_data_i,
+    input  logic [DcacheReqWidth-1:0] dcache_data_i_flat,
     // returning packets must be consumed immediately
     output logic         dcache_rtrn_vld_o,
-    output dcache_rtrn_t dcache_rtrn_o,
+    output logic [DcacheRtrnWidth-1:0] dcache_rtrn_o_flat,
 
     // AXI port
-    output axi_req_t axi_req_o,
-    input  axi_rsp_t axi_resp_i,
+    output logic [AxiReqWidth-1:0] axi_req_o_flat,
+    input  logic [AxiRespWidth-1:0] axi_resp_i_flat,
 
     // Endianness Control Signal from CSR
     input logic mbe_i,
@@ -60,6 +60,136 @@ module wt_axi_adapter
     input  logic        inval_valid_i,
     output logic        inval_ready_o
 );
+
+  typedef struct packed {
+    logic [CVA6Cfg.AxiIdWidth-1:0]   id;
+    logic [CVA6Cfg.AxiAddrWidth-1:0] addr;
+    axi_pkg::len_t                   len;
+    axi_pkg::size_t                  size;
+    axi_pkg::burst_t                 burst;
+    logic                            lock;
+    axi_pkg::cache_t                 cache;
+    axi_pkg::prot_t                  prot;
+    axi_pkg::qos_t                   qos;
+    axi_pkg::region_t                region;
+    axi_pkg::atop_t                  atop;
+    logic [CVA6Cfg.AxiUserWidth-1:0] user;
+  } axi_aw_chan_t;
+
+  typedef struct packed {
+    logic [CVA6Cfg.AxiIdWidth-1:0]   id;
+    logic [CVA6Cfg.AxiAddrWidth-1:0] addr;
+    axi_pkg::len_t                   len;
+    axi_pkg::size_t                  size;
+    axi_pkg::burst_t                 burst;
+    logic                            lock;
+    axi_pkg::cache_t                 cache;
+    axi_pkg::prot_t                  prot;
+    axi_pkg::qos_t                   qos;
+    axi_pkg::region_t                region;
+    logic [CVA6Cfg.AxiUserWidth-1:0] user;
+  } axi_ar_chan_t;
+
+  typedef struct packed {
+    logic [CVA6Cfg.AxiDataWidth-1:0]     data;
+    logic [(CVA6Cfg.AxiDataWidth/8)-1:0] strb;
+    logic                                last;
+    logic [CVA6Cfg.AxiUserWidth-1:0]     user;
+  } axi_w_chan_t;
+
+  typedef struct packed {
+    logic [CVA6Cfg.AxiIdWidth-1:0]   id;
+    axi_pkg::resp_t                  resp;
+    logic [CVA6Cfg.AxiUserWidth-1:0] user;
+  } b_chan_t;
+
+  typedef struct packed {
+    logic [CVA6Cfg.AxiIdWidth-1:0]   id;
+    logic [CVA6Cfg.AxiDataWidth-1:0] data;
+    axi_pkg::resp_t                  resp;
+    logic                            last;
+    logic [CVA6Cfg.AxiUserWidth-1:0] user;
+  } r_chan_t;
+
+  typedef struct packed {
+    axi_aw_chan_t aw;
+    logic         aw_valid;
+    axi_w_chan_t  w;
+    logic         w_valid;
+    logic         b_ready;
+    axi_ar_chan_t ar;
+    logic         ar_valid;
+    logic         r_ready;
+  } axi_req_t;
+
+  typedef struct packed {
+    logic    aw_ready;
+    logic    ar_ready;
+    logic    w_ready;
+    logic    b_valid;
+    b_chan_t b;
+    logic    r_valid;
+    r_chan_t r;
+  } axi_rsp_t;
+
+  typedef struct packed {
+    logic                                      vld;
+    logic                                      all;
+    logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0]     idx;
+    logic [CVA6Cfg.DCACHE_SET_ASSOC_WIDTH-1:0] way;
+  } dcache_inval_t;
+
+  typedef struct packed {
+    wt_cache_pkg::dcache_out_t rtype;
+    logic [2:0]                                size;
+    logic [CVA6Cfg.DCACHE_SET_ASSOC_WIDTH-1:0] way;
+    logic [CVA6Cfg.PLEN-1:0]                   paddr;
+    logic [CVA6Cfg.XLEN-1:0]                   data;
+    logic [CVA6Cfg.DCACHE_USER_WIDTH-1:0]      user;
+    logic                                      nc;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0]          tid;
+    ariane_pkg::amo_t                          amo_op;
+  } dcache_req_t;
+
+  typedef struct packed {
+    wt_cache_pkg::dcache_in_t rtype;
+    logic [CVA6Cfg.DCACHE_LINE_WIDTH-1:0]      data;
+    logic [CVA6Cfg.DCACHE_USER_LINE_WIDTH-1:0] user;
+    dcache_inval_t                             inv;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0]          tid;
+  } dcache_rtrn_t;
+
+  typedef struct packed {
+    logic [CVA6Cfg.ICACHE_SET_ASSOC_WIDTH-1:0] way;
+    logic [CVA6Cfg.PLEN-1:0] paddr;
+    logic nc;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0] tid;
+  } icache_req_t;
+
+  typedef struct packed {
+    wt_cache_pkg::icache_in_t rtype;
+    logic [CVA6Cfg.ICACHE_LINE_WIDTH-1:0] data;
+    logic [CVA6Cfg.ICACHE_USER_LINE_WIDTH-1:0] user;
+    struct packed {
+      logic                                      vld;
+      logic                                      all;
+      logic [CVA6Cfg.ICACHE_INDEX_WIDTH-1:0]     idx;
+      logic [CVA6Cfg.ICACHE_SET_ASSOC_WIDTH-1:0] way;
+    } inv;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0] tid;
+  } icache_rtrn_t;
+  icache_req_t icache_data_i;
+  icache_rtrn_t icache_rtrn_o;
+  dcache_req_t dcache_data_i;
+  dcache_rtrn_t dcache_rtrn_o;
+  axi_req_t axi_req_o;
+  axi_rsp_t axi_resp_i;
+  assign icache_data_i = icache_data_i_flat;
+  assign icache_rtrn_o_flat = icache_rtrn_o;
+  assign dcache_data_i = dcache_data_i_flat;
+  assign dcache_rtrn_o_flat = dcache_rtrn_o;
+  assign axi_req_o_flat = axi_req_o;
+  assign axi_resp_i = axi_resp_i_flat;
 
   // support up to 512bit cache lines
   localparam AxiNumWords = (CVA6Cfg.ICACHE_LINE_WIDTH/CVA6Cfg.AxiDataWidth) * (CVA6Cfg.ICACHE_LINE_WIDTH > CVA6Cfg.DCACHE_LINE_WIDTH)  +

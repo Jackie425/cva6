@@ -104,24 +104,59 @@ module wt_cache_subsystem
     logic [CVA6Cfg.MEM_TID_WIDTH-1:0] tid;  // thread id (used as transaction id in Ariane)
   };
 
+  localparam int unsigned IcacheAreqWidth = $bits(icache_areq_t);
+  localparam int unsigned IcacheArspWidth = $bits(icache_arsp_t);
+  localparam int unsigned IcacheDreqWidth = $bits(icache_dreq_t);
+  localparam int unsigned IcacheDrspWidth = $bits(icache_drsp_t);
+  localparam int unsigned IcacheReqWidth = $bits(icache_req_t);
+  localparam int unsigned IcacheRtrnWidth = $bits(icache_rtrn_t);
+`ifndef PITON_ARIANE
+  localparam int unsigned NocReqWidth = $bits(noc_req_t);
+  localparam int unsigned NocRespWidth = $bits(noc_resp_t);
+`endif
+  logic [IcacheAreqWidth-1:0] icache_areq_i_flat;
+  logic [IcacheArspWidth-1:0] icache_areq_o_flat;
+  logic [IcacheDreqWidth-1:0] icache_dreq_i_flat;
+  logic [IcacheDrspWidth-1:0] icache_dreq_o_flat;
+`ifndef PITON_ARIANE
+  logic [NocReqWidth-1:0] noc_req_o_flat;
+  logic [NocRespWidth-1:0] noc_resp_i_flat;
+`endif
+  assign icache_areq_i_flat = icache_areq_i;
+  assign icache_areq_o = icache_areq_o_flat;
+  assign icache_dreq_i_flat = icache_dreq_i;
+  assign icache_dreq_o = icache_dreq_o_flat;
+`ifndef PITON_ARIANE
+  assign noc_req_o = noc_req_o_flat;
+  assign noc_resp_i_flat = noc_resp_i;
+`endif
   logic icache_adapter_data_req, adapter_icache_data_ack, adapter_icache_rtrn_vld;
-  icache_req_t  icache_adapter;
-  icache_rtrn_t adapter_icache;
+  logic [IcacheReqWidth-1:0]  icache_adapter;
+  logic [IcacheRtrnWidth-1:0] adapter_icache;
 
 
+  localparam int unsigned DcacheReqIWidth = $bits(dcache_req_i_t);
+  localparam int unsigned DcacheReqOWidth = $bits(dcache_req_o_t);
+  localparam int unsigned DcacheReqWidth = $bits(dcache_req_t);
+  localparam int unsigned DcacheRtrnWidth = $bits(dcache_rtrn_t);
+  localparam int unsigned DcacheInvalWidth = $bits(dcache_inval_t);
+  logic [NumPorts-1:0][DcacheReqIWidth-1:0] dcache_req_ports_i_flat;
+  logic [NumPorts-1:0][DcacheReqOWidth-1:0] dcache_req_ports_o_flat;
+  assign dcache_req_ports_i_flat = dcache_req_ports_i;
+  assign dcache_req_ports_o = dcache_req_ports_o_flat;
   logic dcache_adapter_data_req, adapter_dcache_data_ack, adapter_dcache_rtrn_vld;
-  dcache_req_t  dcache_adapter;
-  dcache_rtrn_t adapter_dcache;
+  logic [DcacheReqWidth-1:0]  dcache_adapter;
+  logic [DcacheRtrnWidth-1:0] adapter_dcache;
 
   cva6_icache #(
       // use ID 0 for icache reads
       .CVA6Cfg(CVA6Cfg),
-      .icache_areq_t(icache_areq_t),
-      .icache_arsp_t(icache_arsp_t),
-      .icache_dreq_t(icache_dreq_t),
-      .icache_drsp_t(icache_drsp_t),
-      .icache_req_t(icache_req_t),
-      .icache_rtrn_t(icache_rtrn_t),
+      .IcacheAreqWidth(IcacheAreqWidth),
+      .IcacheArspWidth(IcacheArspWidth),
+      .IcacheDreqWidth(IcacheDreqWidth),
+      .IcacheDrspWidth(IcacheDrspWidth),
+      .IcacheReqWidth(IcacheReqWidth),
+      .IcacheRtrnWidth(IcacheRtrnWidth),
       .RdTxId(0)
   ) i_cva6_icache (
       .clk_i         (clk_i),
@@ -129,15 +164,15 @@ module wt_cache_subsystem
       .flush_i       (icache_flush_i),
       .en_i          (icache_en_i),
       .miss_o        (icache_miss_o),
-      .areq_i        (icache_areq_i),
-      .areq_o        (icache_areq_o),
-      .dreq_i        (icache_dreq_i),
-      .dreq_o        (icache_dreq_o),
+      .areq_i_flat   (icache_areq_i_flat),
+      .areq_o_flat   (icache_areq_o_flat),
+      .dreq_i_flat   (icache_dreq_i_flat),
+      .dreq_o_flat   (icache_dreq_o_flat),
       .mem_rtrn_vld_i(adapter_icache_rtrn_vld),
-      .mem_rtrn_i    (adapter_icache),
+      .mem_rtrn_i_flat(adapter_icache),
       .mem_data_req_o(icache_adapter_data_req),
       .mem_data_ack_i(adapter_icache_data_ack),
-      .mem_data_o    (icache_adapter)
+      .mem_data_o_flat(icache_adapter)
   );
 
 
@@ -147,10 +182,10 @@ module wt_cache_subsystem
   // Port 2 is write only and goes into the merging write buffer
   wt_dcache #(
       .CVA6Cfg(CVA6Cfg),
-      .dcache_req_i_t(dcache_req_i_t),
-      .dcache_req_o_t(dcache_req_o_t),
-      .dcache_req_t(dcache_req_t),
-      .dcache_rtrn_t(dcache_rtrn_t),
+      .DcacheReqIWidth(DcacheReqIWidth),
+      .DcacheReqOWidth(DcacheReqOWidth),
+      .DcacheReqWidth(DcacheReqWidth),
+      .DcacheRtrnWidth(DcacheRtrnWidth),
       // use ID 1 for dcache reads and amos. note that the writebuffer
       // uses all IDs up to DCACHE_MAX_TX-1 for write transactions.
       .RdAmoTxId(1)
@@ -166,14 +201,14 @@ module wt_cache_subsystem
       .amo_req_i       (dcache_amo_req_i),
       .amo_resp_o      (dcache_amo_resp_o),
       .mbe_i           (mbe_i),
-      .req_ports_i     (dcache_req_ports_i),
-      .req_ports_o     (dcache_req_ports_o),
+      .req_ports_i_flat(dcache_req_ports_i_flat),
+      .req_ports_o_flat(dcache_req_ports_o_flat),
       .miss_vld_bits_o (miss_vld_bits_o),
       .mem_rtrn_vld_i  (adapter_dcache_rtrn_vld),
-      .mem_rtrn_i      (adapter_dcache),
+      .mem_rtrn_i_flat (adapter_dcache),
       .mem_data_req_o  (dcache_adapter_data_req),
       .mem_data_ack_i  (adapter_dcache_data_ack),
-      .mem_data_o      (dcache_adapter)
+      .mem_data_o_flat (dcache_adapter)
   );
 
 
@@ -183,6 +218,15 @@ module wt_cache_subsystem
   ///////////////////////////////////////////////////////
 
 `ifdef PITON_ARIANE
+  icache_req_t  icache_adapter_typed;
+  icache_rtrn_t adapter_icache_typed;
+  dcache_req_t  dcache_adapter_typed;
+  dcache_rtrn_t adapter_dcache_typed;
+  assign icache_adapter_typed = icache_adapter;
+  assign adapter_icache = adapter_icache_typed;
+  assign dcache_adapter_typed = dcache_adapter;
+  assign adapter_dcache = adapter_dcache_typed;
+
   wt_l15_adapter #(
       .CVA6Cfg(CVA6Cfg),
       .dcache_req_t(dcache_req_t),
@@ -194,42 +238,42 @@ module wt_cache_subsystem
       .rst_ni           (rst_ni),
       .icache_data_req_i(icache_adapter_data_req),
       .icache_data_ack_o(adapter_icache_data_ack),
-      .icache_data_i    (icache_adapter),
+      .icache_data_i    (icache_adapter_typed),
       .icache_rtrn_vld_o(adapter_icache_rtrn_vld),
-      .icache_rtrn_o    (adapter_icache),
+      .icache_rtrn_o    (adapter_icache_typed),
       .dcache_data_req_i(dcache_adapter_data_req),
       .dcache_data_ack_o(adapter_dcache_data_ack),
-      .dcache_data_i    (dcache_adapter),
+      .dcache_data_i    (dcache_adapter_typed),
       .dcache_rtrn_vld_o(adapter_dcache_rtrn_vld),
-      .dcache_rtrn_o    (adapter_dcache),
+      .dcache_rtrn_o    (adapter_dcache_typed),
       .l15_req_o        (noc_req_o),
       .l15_rtrn_i       (noc_resp_i)
   );
 `else
   wt_axi_adapter #(
       .CVA6Cfg(CVA6Cfg),
-      .axi_req_t(noc_req_t),
-      .axi_rsp_t(noc_resp_t),
-      .dcache_req_t(dcache_req_t),
-      .dcache_rtrn_t(dcache_rtrn_t),
-      .dcache_inval_t(dcache_inval_t),
-      .icache_req_t(icache_req_t),
-      .icache_rtrn_t(icache_rtrn_t)
+      .AxiReqWidth(NocReqWidth),
+      .AxiRespWidth(NocRespWidth),
+      .DcacheReqWidth(DcacheReqWidth),
+      .DcacheRtrnWidth(DcacheRtrnWidth),
+      .DcacheInvalWidth(DcacheInvalWidth),
+      .IcacheReqWidth(IcacheReqWidth),
+      .IcacheRtrnWidth(IcacheRtrnWidth)
   ) i_adapter (
       .clk_i            (clk_i),
       .rst_ni           (rst_ni),
       .icache_data_req_i(icache_adapter_data_req),
       .icache_data_ack_o(adapter_icache_data_ack),
-      .icache_data_i    (icache_adapter),
+      .icache_data_i_flat(icache_adapter),
       .icache_rtrn_vld_o(adapter_icache_rtrn_vld),
-      .icache_rtrn_o    (adapter_icache),
+      .icache_rtrn_o_flat(adapter_icache),
       .dcache_data_req_i(dcache_adapter_data_req),
       .dcache_data_ack_o(adapter_dcache_data_ack),
-      .dcache_data_i    (dcache_adapter),
+      .dcache_data_i_flat(dcache_adapter),
       .dcache_rtrn_vld_o(adapter_dcache_rtrn_vld),
-      .dcache_rtrn_o    (adapter_dcache),
-      .axi_req_o        (noc_req_o),
-      .axi_resp_i       (noc_resp_i),
+      .dcache_rtrn_o_flat(adapter_dcache),
+      .axi_req_o_flat   (noc_req_o_flat),
+      .axi_resp_i_flat  (noc_resp_i_flat),
       .mbe_i            (mbe_i),
       .inval_addr_i     (inval_addr_i),
       .inval_valid_i    (inval_valid_i),

@@ -18,10 +18,10 @@ module wt_dcache
   import wt_cache_pkg::*;
 #(
     parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty,
-    parameter type dcache_req_i_t = logic,
-    parameter type dcache_req_o_t = logic,
-    parameter type dcache_req_t = logic,
-    parameter type dcache_rtrn_t = logic,
+    parameter int unsigned DcacheReqIWidth = 1,
+    parameter int unsigned DcacheReqOWidth = 1,
+    parameter int unsigned DcacheReqWidth = 1,
+    parameter int unsigned DcacheRtrnWidth = 1,
     parameter int unsigned NumPorts = 4,  // number of miss ports
     // ID to be used for read and AMO transactions.
     // note that the write buffer uses all IDs up to DCACHE_MAX_TX-1 for write transactions
@@ -44,17 +44,78 @@ module wt_dcache
     input  logic      mbe_i,
 
     // Request ports
-    input  dcache_req_i_t [NumPorts-1:0] req_ports_i,
-    output dcache_req_o_t [NumPorts-1:0] req_ports_o,
+    input  logic [NumPorts-1:0][DcacheReqIWidth-1:0] req_ports_i_flat,
+    output logic [NumPorts-1:0][DcacheReqOWidth-1:0] req_ports_o_flat,
 
     output logic [NumPorts-1:0][CVA6Cfg.DCACHE_SET_ASSOC-1:0] miss_vld_bits_o,
 
     input  logic         mem_rtrn_vld_i,
-    input  dcache_rtrn_t mem_rtrn_i,
+    input  logic [DcacheRtrnWidth-1:0] mem_rtrn_i_flat,
     output logic         mem_data_req_o,
     input  logic         mem_data_ack_i,
-    output dcache_req_t  mem_data_o
+    output logic [DcacheReqWidth-1:0] mem_data_o_flat
 );
+
+  typedef logic [7:0] cbo_t;
+
+  typedef struct packed {
+    logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0] address_index;
+    logic [CVA6Cfg.DCACHE_TAG_WIDTH-1:0]   address_tag;
+    logic [CVA6Cfg.XLEN-1:0]               data_wdata;
+    logic [CVA6Cfg.DCACHE_USER_WIDTH-1:0]  data_wuser;
+    logic                                  data_req;
+    logic                                  data_we;
+    logic [(CVA6Cfg.XLEN/8)-1:0]           data_be;
+    logic [1:0]                            data_size;
+    logic [CVA6Cfg.DcacheIdWidth-1:0]      data_id;
+    logic                                  kill_req;
+    logic                                  tag_valid;
+    cbo_t                                  cbo_op;
+  } dcache_req_i_t;
+
+  typedef struct packed {
+    logic                                 data_gnt;
+    logic                                 data_rvalid;
+    logic [CVA6Cfg.DcacheIdWidth-1:0]     data_rid;
+    logic [CVA6Cfg.XLEN-1:0]              data_rdata;
+    logic [CVA6Cfg.DCACHE_USER_WIDTH-1:0] data_ruser;
+  } dcache_req_o_t;
+
+  typedef struct packed {
+    logic                                      vld;
+    logic                                      all;
+    logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0]     idx;
+    logic [CVA6Cfg.DCACHE_SET_ASSOC_WIDTH-1:0] way;
+  } dcache_inval_t;
+
+  typedef struct packed {
+    wt_cache_pkg::dcache_out_t rtype;
+    logic [2:0]                             size;
+    logic [CVA6Cfg.DCACHE_SET_ASSOC_WIDTH-1:0] way;
+    logic [CVA6Cfg.PLEN-1:0]                paddr;
+    logic [CVA6Cfg.XLEN-1:0]                data;
+    logic [CVA6Cfg.DCACHE_USER_WIDTH-1:0]   user;
+    logic                                   nc;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0]       tid;
+    ariane_pkg::amo_t                       amo_op;
+  } dcache_req_t;
+
+  typedef struct packed {
+    wt_cache_pkg::dcache_in_t rtype;
+    logic [CVA6Cfg.DCACHE_LINE_WIDTH-1:0]      data;
+    logic [CVA6Cfg.DCACHE_USER_LINE_WIDTH-1:0] user;
+    dcache_inval_t                             inv;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0]          tid;
+  } dcache_rtrn_t;
+
+  dcache_req_i_t [NumPorts-1:0] req_ports_i;
+  dcache_req_o_t [NumPorts-1:0] req_ports_o;
+  dcache_rtrn_t mem_rtrn_i;
+  dcache_req_t mem_data_o;
+  assign req_ports_i = req_ports_i_flat;
+  assign req_ports_o_flat = req_ports_o;
+  assign mem_rtrn_i = mem_rtrn_i_flat;
+  assign mem_data_o_flat = mem_data_o;
 
   localparam DCACHE_CL_IDX_WIDTH = $clog2(CVA6Cfg.DCACHE_NUM_WORDS);
 

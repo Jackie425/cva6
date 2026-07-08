@@ -30,12 +30,13 @@ module cva6_icache
   import wt_cache_pkg::*;
 #(
     parameter config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty,
-    parameter type icache_areq_t = logic,
-    parameter type icache_arsp_t = logic,
-    parameter type icache_dreq_t = logic,
-    parameter type icache_drsp_t = logic,
-    parameter type icache_req_t = logic,
-    parameter type icache_rtrn_t = logic,
+    parameter int unsigned IcacheAreqWidth = 1 + CVA6Cfg.PLEN + 1,
+    parameter int unsigned IcacheExceptionWidth = IcacheAreqWidth - 1 - CVA6Cfg.PLEN,
+    parameter int unsigned IcacheArspWidth = 1 + CVA6Cfg.VLEN,
+    parameter int unsigned IcacheDreqWidth = 4 + CVA6Cfg.VLEN,
+    parameter int unsigned IcacheDrspWidth = 2 + CVA6Cfg.FETCH_WIDTH + CVA6Cfg.FETCH_USER_WIDTH + CVA6Cfg.VLEN + IcacheExceptionWidth,
+    parameter int unsigned IcacheReqWidth = CVA6Cfg.ICACHE_SET_ASSOC_WIDTH + CVA6Cfg.PLEN + 1 + CVA6Cfg.MEM_TID_WIDTH,
+    parameter int unsigned IcacheRtrnWidth = $bits(wt_cache_pkg::icache_in_t) + CVA6Cfg.ICACHE_LINE_WIDTH + CVA6Cfg.ICACHE_USER_LINE_WIDTH + 1 + 1 + CVA6Cfg.ICACHE_INDEX_WIDTH + CVA6Cfg.ICACHE_SET_ASSOC_WIDTH + CVA6Cfg.MEM_TID_WIDTH,
     /// ID to be used for read transactions
     parameter logic [CVA6Cfg.MEM_TID_WIDTH-1:0] RdTxId = 0
 ) (
@@ -49,18 +50,88 @@ module cva6_icache
     /// to performance counter
     output logic         miss_o,
     // address translation requests
-    input  icache_areq_t areq_i,
-    output icache_arsp_t areq_o,
+    input  logic [IcacheAreqWidth-1:0] areq_i_flat,
+    output logic [IcacheArspWidth-1:0] areq_o_flat,
     // data requests
-    input  icache_dreq_t dreq_i,
-    output icache_drsp_t dreq_o,
+    input  logic [IcacheDreqWidth-1:0] dreq_i_flat,
+    output logic [IcacheDrspWidth-1:0] dreq_o_flat,
     // refill port
     input  logic         mem_rtrn_vld_i,
-    input  icache_rtrn_t mem_rtrn_i,
+    input  logic [IcacheRtrnWidth-1:0] mem_rtrn_i_flat,
     output logic         mem_data_req_o,
     input  logic         mem_data_ack_i,
-    output icache_req_t  mem_data_o
+    output logic [IcacheReqWidth-1:0] mem_data_o_flat
 );
+
+  typedef struct packed {
+    logic [CVA6Cfg.XLEN-1:0] cause;
+    logic [CVA6Cfg.XLEN-1:0] tval;
+    logic [CVA6Cfg.GPLEN-1:0] tval2;
+    logic [31:0] tinst;
+    logic gva;
+    logic valid;
+  } icache_exception_t;
+
+  typedef struct packed {
+    logic fetch_valid;
+    logic [CVA6Cfg.PLEN-1:0] fetch_paddr;
+    icache_exception_t fetch_exception;
+  } icache_areq_t;
+
+  typedef struct packed {
+    logic fetch_req;
+    logic [CVA6Cfg.VLEN-1:0] fetch_vaddr;
+  } icache_arsp_t;
+
+  typedef struct packed {
+    logic req;
+    logic kill_s1;
+    logic kill_s2;
+    logic spec;
+    logic [CVA6Cfg.VLEN-1:0] vaddr;
+  } icache_dreq_t;
+
+  typedef struct packed {
+    logic ready;
+    logic valid;
+    logic [CVA6Cfg.FETCH_WIDTH-1:0] data;
+    logic [CVA6Cfg.FETCH_USER_WIDTH-1:0] user;
+    logic [CVA6Cfg.VLEN-1:0] vaddr;
+    icache_exception_t ex;
+  } icache_drsp_t;
+
+  typedef struct packed {
+    logic [CVA6Cfg.ICACHE_SET_ASSOC_WIDTH-1:0] way;
+    logic [CVA6Cfg.PLEN-1:0] paddr;
+    logic nc;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0] tid;
+  } icache_req_t;
+
+  typedef struct packed {
+    wt_cache_pkg::icache_in_t rtype;
+    logic [CVA6Cfg.ICACHE_LINE_WIDTH-1:0] data;
+    logic [CVA6Cfg.ICACHE_USER_LINE_WIDTH-1:0] user;
+    struct packed {
+      logic                                      vld;
+      logic                                      all;
+      logic [CVA6Cfg.ICACHE_INDEX_WIDTH-1:0]     idx;
+      logic [CVA6Cfg.ICACHE_SET_ASSOC_WIDTH-1:0] way;
+    } inv;
+    logic [CVA6Cfg.MEM_TID_WIDTH-1:0] tid;
+  } icache_rtrn_t;
+
+  icache_areq_t areq_i;
+  icache_arsp_t areq_o;
+  icache_dreq_t dreq_i;
+  icache_drsp_t dreq_o;
+  icache_rtrn_t mem_rtrn_i;
+  icache_req_t mem_data_o;
+  assign areq_i = areq_i_flat;
+  assign areq_o_flat = areq_o;
+  assign dreq_i = dreq_i_flat;
+  assign dreq_o_flat = dreq_o;
+  assign mem_rtrn_i = mem_rtrn_i_flat;
+  assign mem_data_o_flat = mem_data_o;
 
   localparam ICACHE_OFFSET_WIDTH = $clog2(CVA6Cfg.ICACHE_LINE_WIDTH / 8);
   localparam ICACHE_NUM_WORDS = 2 ** (CVA6Cfg.ICACHE_INDEX_WIDTH - ICACHE_OFFSET_WIDTH);
@@ -202,6 +273,7 @@ module cva6_icache
   assign dreq_o.data    = dreq_data;
   assign dreq_o.user    = dreq_user;
   assign dreq_o.vaddr   = dreq_vaddr;
+  assign areq_fetch_req = (state_q == READ) || (state_q == KILL_ATRANS);
 
   // invalidations take two cycles
   assign inv_d          = inv_en;
@@ -222,7 +294,7 @@ module cva6_icache
   assign fetch_valid_qualified = areq_i.fetch_valid &&
       (!dreq_i.spec || ((CVA6Cfg.NonIdemPotenceEn && !addr_ni) || (!CVA6Cfg.NonIdemPotenceEn)));
   assign fetch_exception_valid = areq_i.fetch_exception.valid;
-  assign read_hit_or_exception = (((|cl_hit && cache_en_q) || fetch_exception_valid) &&
+  assign read_hit_or_exception = (((((|cl_hit) === 1'b1) && cache_en_q) || fetch_exception_valid) &&
       !inv_q);
   assign read_miss_req = (state_q == READ) && fetch_valid_qualified && !flush_pending &&
       !read_hit_or_exception && !dreq_i.kill_s2 && !inv_q && !mem_data_req_q;
@@ -246,7 +318,6 @@ module cva6_icache
 
     // interfaces
     dreq_ready = 1'b0;
-    areq_fetch_req = 1'b0;
     dreq_valid = 1'b0;
     // performance counter
     miss_o = 1'b0;
@@ -304,7 +375,6 @@ module cva6_icache
       // reuse the miss mechanism to handle
       // the request
       READ: begin
-        areq_fetch_req = '1;
         // only enable tag comparison if cache is enabled
         cmp_en_d    = cache_en_q;
         // readout speculatively
@@ -325,7 +395,7 @@ module cva6_icache
           if (flush_d) begin
             state_d = IDLE;
             // we have a hit or an exception output valid result
-          end else if (((|cl_hit && cache_en_q) || fetch_exception_valid) && !inv_q) begin
+          end else if (read_hit_or_exception) begin
             dreq_valid = ~dreq_i.kill_s2;  // just don't output in this case
             state_d      = IDLE;
 
@@ -387,7 +457,6 @@ module cva6_icache
       // wait until paddr is valid, and go
       // back to idle
       KILL_ATRANS: begin
-        areq_fetch_req = '1;
         if (areq_i.fetch_valid) begin
           state_d = IDLE;
         end

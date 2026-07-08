@@ -17,8 +17,8 @@ module scoreboard #(
     parameter type bp_resolve_t = logic,
     parameter type exception_t = logic,
     parameter type scoreboard_entry_t = logic,
-    parameter type forwarding_t = logic,
     parameter type writeback_t = logic,
+    parameter int unsigned ForwardingWidth = CVA6Cfg.NR_SB_ENTRIES + CVA6Cfg.TRANS_ID_BITS + CVA6Cfg.NrWbPorts * $bits(writeback_t) + CVA6Cfg.NR_SB_ENTRIES * $bits(scoreboard_entry_t),
     parameter type rs3_len_t = logic
 ) (
     // Subsystem Clock - SUBSYSTEM
@@ -67,7 +67,7 @@ module scoreboard #(
     // Issue stage acknowledge - ISSUE_READ_OPERANDS
     input  logic              [CVA6Cfg.NrIssuePorts-1:0]       issue_ack_i,
     // Forwarding - ISSUE_READ_OPERANDS
-    output forwarding_t                                        fwd_o,
+    output logic              [ForwardingWidth-1:0]            fwd_o,
 
     // Result from branch unit - EX_STAGE
     input bp_resolve_t resolved_branch_i,
@@ -89,6 +89,15 @@ module scoreboard #(
     // Commit pointer - RVFI
     output logic [CVA6Cfg.NrCommitPorts-1:0][CVA6Cfg.TRANS_ID_BITS-1:0] rvfi_commit_pointer_o
 );
+
+  typedef struct packed {
+    logic [CVA6Cfg.NR_SB_ENTRIES-1:0] still_issued;
+    logic [CVA6Cfg.TRANS_ID_BITS-1:0] issue_pointer;
+    writeback_t [CVA6Cfg.NrWbPorts-1:0] wb;
+    scoreboard_entry_t [CVA6Cfg.NR_SB_ENTRIES-1:0] sbe;
+  } forwarding_t;
+  forwarding_t fwd;
+  assign fwd_o = fwd;
 
   // this is the FIFO struct of the issue queue
   typedef struct packed {
@@ -293,11 +302,11 @@ module scoreboard #(
     assign wb[i].trans_id = trans_id_i[i];
   end
 
-  assign fwd_o.still_issued = still_issued;
-  assign fwd_o.issue_pointer = issue_pointer[0];
-  assign fwd_o.wb = wb;
+  assign fwd.still_issued = still_issued;
+  assign fwd.issue_pointer = issue_pointer[0];
+  assign fwd.wb = wb;
   for (genvar i = 0; i < CVA6Cfg.NR_SB_ENTRIES; i++) begin
-    assign fwd_o.sbe[i] = mem_q[i].sbe;
+    assign fwd.sbe[i] = mem_q[i].sbe;
   end
 
   // sequential process

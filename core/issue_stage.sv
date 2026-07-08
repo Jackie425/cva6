@@ -184,7 +184,8 @@ module issue_stage
     scoreboard_entry_t [CVA6Cfg.NR_SB_ENTRIES-1:0] sbe;
   } forwarding_t;
 
-  forwarding_t                                        fwd;
+  localparam int unsigned ForwardingWidth = $bits(forwarding_t);
+  logic [ForwardingWidth-1:0]                         fwd;
   scoreboard_entry_t [CVA6Cfg.NrIssuePorts-1:0]       issue_instr_sb_iro;
   logic              [CVA6Cfg.NrIssuePorts-1:0][31:0] orig_instr_sb_iro;
   logic              [CVA6Cfg.NrIssuePorts-1:0]       issue_instr_valid_sb_iro;
@@ -204,7 +205,7 @@ module issue_stage
       .rs3_len_t (rs3_len_t),
       .bp_resolve_t(bp_resolve_t),
       .writeback_t(writeback_t),
-      .forwarding_t(forwarding_t),
+      .ForwardingWidth(ForwardingWidth),
       .exception_t(exception_t),
       .scoreboard_entry_t(scoreboard_entry_t)
   ) i_scoreboard (
@@ -249,7 +250,7 @@ module issue_stage
       .scoreboard_entry_t(scoreboard_entry_t),
       .rs3_len_t(rs3_len_t),
       .writeback_t(writeback_t),
-      .forwarding_t(forwarding_t),
+      .ForwardingWidth(ForwardingWidth),
       .x_issue_req_t(x_issue_req_t),
       .x_issue_resp_t(x_issue_resp_t),
       .x_register_t(x_register_t),
@@ -264,7 +265,7 @@ module issue_stage
       .orig_instr_i            (orig_instr_sb_iro),
       .issue_instr_valid_i     (issue_instr_valid_sb_iro),
       .issue_ack_o             (issue_ack_iro_sb),
-      .fwd_i                   (fwd),
+      .fwd_i_flat              (fwd),
       .fu_data_o               (fu_data_o),
       .alu_bypass_o            (alu_bypass_o),
       .rs1_forwarding_o        (rs1_forwarding_o),

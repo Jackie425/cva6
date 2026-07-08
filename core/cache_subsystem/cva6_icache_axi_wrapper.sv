@@ -53,6 +53,24 @@ module cva6_icache_axi_wrapper
   logic                                    icache_mem_data_req;
   logic                                    icache_mem_data_ack;
   icache_req_t                             icache_mem_data;
+  localparam int unsigned IcacheAreqWidth = $bits(icache_areq_t);
+  localparam int unsigned IcacheArspWidth = $bits(icache_arsp_t);
+  localparam int unsigned IcacheDreqWidth = $bits(icache_dreq_t);
+  localparam int unsigned IcacheDrspWidth = $bits(icache_drsp_t);
+  localparam int unsigned IcacheReqWidth = $bits(icache_req_t);
+  localparam int unsigned IcacheRtrnWidth = $bits(icache_rtrn_t);
+  logic [IcacheAreqWidth-1:0] icache_areq_flat;
+  logic [IcacheArspWidth-1:0] icache_arsp_flat;
+  logic [IcacheDreqWidth-1:0] icache_dreq_flat;
+  logic [IcacheDrspWidth-1:0] icache_drsp_flat;
+  logic [IcacheReqWidth-1:0] icache_mem_data_flat;
+  logic [IcacheRtrnWidth-1:0] icache_mem_rtrn_flat;
+  assign icache_areq_flat = areq_i;
+  assign areq_o = icache_arsp_flat;
+  assign icache_dreq_flat = dreq_i;
+  assign dreq_o = icache_drsp_flat;
+  assign icache_mem_data = icache_mem_data_flat;
+  assign icache_mem_rtrn_flat = icache_mem_rtrn;
 
   logic                                    axi_rd_req;
   logic                                    axi_rd_gnt;
@@ -108,12 +126,12 @@ module cva6_icache_axi_wrapper
   cva6_icache #(
       // use ID 0 for icache reads
       .CVA6Cfg(CVA6Cfg),
-      .icache_areq_t(icache_areq_t),
-      .icache_arsp_t(icache_arsp_t),
-      .icache_dreq_t(icache_dreq_t),
-      .icache_drsp_t(icache_drsp_t),
-      .icache_req_t(icache_req_t),
-      .icache_rtrn_t(icache_rtrn_t),
+      .IcacheAreqWidth(IcacheAreqWidth),
+      .IcacheArspWidth(IcacheArspWidth),
+      .IcacheDreqWidth(IcacheDreqWidth),
+      .IcacheDrspWidth(IcacheDrspWidth),
+      .IcacheReqWidth(IcacheReqWidth),
+      .IcacheRtrnWidth(IcacheRtrnWidth),
       .RdTxId(0)
   ) i_cva6_icache (
       .clk_i         (clk_i),
@@ -121,15 +139,15 @@ module cva6_icache_axi_wrapper
       .flush_i       (flush_i),
       .en_i          (en_i),
       .miss_o        (miss_o),
-      .areq_i        (areq_i),
-      .areq_o        (areq_o),
-      .dreq_i        (dreq_i),
-      .dreq_o        (dreq_o),
+      .areq_i_flat   (icache_areq_flat),
+      .areq_o_flat   (icache_arsp_flat),
+      .dreq_i_flat   (icache_dreq_flat),
+      .dreq_o_flat   (icache_drsp_flat),
       .mem_rtrn_vld_i(icache_mem_rtrn_vld),
-      .mem_rtrn_i    (icache_mem_rtrn),
+      .mem_rtrn_i_flat(icache_mem_rtrn_flat),
       .mem_data_req_o(icache_mem_data_req),
       .mem_data_ack_i(icache_mem_data_ack),
-      .mem_data_o    (icache_mem_data)
+      .mem_data_o_flat(icache_mem_data_flat)
   );
 
   // --------

@@ -190,6 +190,8 @@ module wt_dcache_wbuffer
   logic [CVA6Cfg.WtDcacheWbufDepth-1:0] ni_pending_d, ni_pending_q;
   logic wbuffer_wren;
   logic free_tx_slots;
+  logic rtrn_checked;
+  logic rtrn_cache_update;
 
   logic wr_cl_vld_q, wr_cl_vld_d;
   logic [DCACHE_CL_IDX_WIDTH-1:0] wr_cl_idx_q, wr_cl_idx_d;
@@ -319,17 +321,20 @@ module wt_dcache_wbuffer
       .pop_i     (evict)
   );
 
+  assign rtrn_checked = (!rtrn_empty) && wbuffer_q[rtrn_ptr].checked;
+  assign rtrn_cache_update =
+      rtrn_checked && ((|wr_data_be_o) === 1'b1) && ((|wbuffer_q[rtrn_ptr].hit_oh) === 1'b1);
+  assign wr_req_o = rtrn_cache_update ? wbuffer_q[rtrn_ptr].hit_oh : '0;
+
   always_comb begin : p_tx_stat
     tx_stat_d = tx_stat_q;
     evict     = 1'b0;
-    wr_req_o  = '0;
 
     // clear entry if it is clear whether it can be pushed to the cache or not
-    if ((!rtrn_empty) && wbuffer_q[rtrn_ptr].checked) begin
+    if (rtrn_checked) begin
       // check if data is clean and can be written, otherwise skip
       // check if CL is present, otherwise skip
-      if ((|wr_data_be_o) && (|wbuffer_q[rtrn_ptr].hit_oh)) begin
-        wr_req_o = wbuffer_q[rtrn_ptr].hit_oh;
+      if (rtrn_cache_update) begin
         if (wr_ack_i) begin
           evict    = 1'b1;
           tx_stat_d[rtrn_id].vld = 1'b0;

@@ -167,7 +167,7 @@ module wt_dcache_ctrl
           if (wr_cl_vld_i || !rd_ack_q) begin
             state_d = REPLAY_REQ;
             // we've got a hit
-          end else if ((|rd_hit_oh_i) && cache_en_i) begin
+          end else if (((|rd_hit_oh_i) === 1'b1) && cache_en_i) begin
             state_d = IDLE;
             req_port_data_rvalid = 1'b1;
             // we can handle another request

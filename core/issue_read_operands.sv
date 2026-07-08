@@ -21,8 +21,8 @@ module issue_read_operands
     parameter type branchpredict_sbe_t = logic,
     parameter type fu_data_t = logic,
     parameter type scoreboard_entry_t = logic,
-    parameter type forwarding_t = logic,
     parameter type writeback_t = logic,
+    parameter int unsigned ForwardingWidth = CVA6Cfg.NR_SB_ENTRIES + CVA6Cfg.TRANS_ID_BITS + CVA6Cfg.NrWbPorts * $bits(writeback_t) + CVA6Cfg.NR_SB_ENTRIES * $bits(scoreboard_entry_t),
     parameter type rs3_len_t = logic,
     parameter type x_issue_req_t = logic,
     parameter type x_issue_resp_t = logic,
@@ -47,7 +47,7 @@ module issue_read_operands
     // Issue stage acknowledge - SCOREBOARD
     output logic [CVA6Cfg.NrIssuePorts-1:0] issue_ack_o,
     // Forwarding - SCOREBOARD
-    input forwarding_t fwd_i,
+    input logic [ForwardingWidth-1:0] fwd_i_flat,
     // FU data useful to execute instruction - EX_STAGE
     output fu_data_t [CVA6Cfg.NrIssuePorts-1:0] fu_data_o,
     // ALU to ALU bypass control - EX_STAGE
@@ -136,6 +136,15 @@ module issue_read_operands
     // Original instruction bits for AES
     output logic [5:0] orig_instr_aes_bits
 );
+
+  typedef struct packed {
+    logic [CVA6Cfg.NR_SB_ENTRIES-1:0] still_issued;
+    logic [CVA6Cfg.TRANS_ID_BITS-1:0] issue_pointer;
+    writeback_t [CVA6Cfg.NrWbPorts-1:0] wb;
+    scoreboard_entry_t [CVA6Cfg.NR_SB_ENTRIES-1:0] sbe;
+  } forwarding_t;
+  forwarding_t fwd_i;
+  assign fwd_i = fwd_i_flat;
 
   localparam OPERANDS_PER_INSTR = CVA6Cfg.NrRgprPorts / CVA6Cfg.NrIssuePorts;
 

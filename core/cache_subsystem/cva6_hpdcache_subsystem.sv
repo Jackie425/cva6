@@ -144,17 +144,35 @@ module cva6_hpdcache_subsystem
 
   logic icache_miss_resp_valid;
   icache_rtrn_t icache_miss_resp;
+  localparam int unsigned IcacheAreqWidth = $bits(icache_areq_t);
+  localparam int unsigned IcacheArspWidth = $bits(icache_arsp_t);
+  localparam int unsigned IcacheDreqWidth = $bits(icache_dreq_t);
+  localparam int unsigned IcacheDrspWidth = $bits(icache_drsp_t);
+  localparam int unsigned IcacheReqWidth = $bits(icache_req_t);
+  localparam int unsigned IcacheRtrnWidth = $bits(icache_rtrn_t);
+  logic [IcacheAreqWidth-1:0] icache_areq_i_flat;
+  logic [IcacheArspWidth-1:0] icache_areq_o_flat;
+  logic [IcacheDreqWidth-1:0] icache_dreq_i_flat;
+  logic [IcacheDrspWidth-1:0] icache_dreq_o_flat;
+  logic [IcacheReqWidth-1:0] icache_miss_flat;
+  logic [IcacheRtrnWidth-1:0] icache_miss_resp_flat;
+  assign icache_areq_i_flat = icache_areq_i;
+  assign icache_areq_o = icache_areq_o_flat;
+  assign icache_dreq_i_flat = icache_dreq_i;
+  assign icache_dreq_o = icache_dreq_o_flat;
+  assign icache_miss = icache_miss_flat;
+  assign icache_miss_resp_flat = icache_miss_resp;
 
   localparam int ICACHE_RDTXID = 1 << (CVA6Cfg.MEM_TID_WIDTH - 1);
 
   cva6_icache #(
       .CVA6Cfg(CVA6Cfg),
-      .icache_areq_t(icache_areq_t),
-      .icache_arsp_t(icache_arsp_t),
-      .icache_dreq_t(icache_dreq_t),
-      .icache_drsp_t(icache_drsp_t),
-      .icache_req_t(icache_req_t),
-      .icache_rtrn_t(icache_rtrn_t),
+      .IcacheAreqWidth(IcacheAreqWidth),
+      .IcacheArspWidth(IcacheArspWidth),
+      .IcacheDreqWidth(IcacheDreqWidth),
+      .IcacheDrspWidth(IcacheDrspWidth),
+      .IcacheReqWidth(IcacheReqWidth),
+      .IcacheRtrnWidth(IcacheRtrnWidth),
       .RdTxId(ICACHE_RDTXID)
   ) i_cva6_icache (
       .clk_i         (clk_i),
@@ -162,15 +180,15 @@ module cva6_hpdcache_subsystem
       .flush_i       (icache_flush_i),
       .en_i          (icache_en_i),
       .miss_o        (icache_miss_o),
-      .areq_i        (icache_areq_i),
-      .areq_o        (icache_areq_o),
-      .dreq_i        (icache_dreq_i),
-      .dreq_o        (icache_dreq_o),
+      .areq_i_flat   (icache_areq_i_flat),
+      .areq_o_flat   (icache_areq_o_flat),
+      .dreq_i_flat   (icache_dreq_i_flat),
+      .dreq_o_flat   (icache_dreq_o_flat),
       .mem_rtrn_vld_i(icache_miss_resp_valid),
-      .mem_rtrn_i    (icache_miss_resp),
+      .mem_rtrn_i_flat(icache_miss_resp_flat),
       .mem_data_req_o(icache_miss_valid),
       .mem_data_ack_i(icache_miss_ready),
-      .mem_data_o    (icache_miss)
+      .mem_data_o_flat(icache_miss_flat)
   );
   //  }}}
 

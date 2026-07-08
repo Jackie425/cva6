@@ -29,14 +29,23 @@ module SyncDpRam #(
   logic [DATA_WIDTH-1:0] mem [DATA_DEPTH-1:0] = '{default: '0};
   logic [DATA_WIDTH-1:0] rdata_a_d, rdata_b_d;
   logic [DATA_WIDTH-1:0] rdata_a_q, rdata_b_q;
+  logic csela_active;
+  logic wrena_active;
+  logic cselb_active;
+  logic wrenb_active;
+
+  assign csela_active = (CSelA_SI === 1'b1);
+  assign wrena_active = (WrEnA_SI === 1'b1);
+  assign cselb_active = (CSelB_SI === 1'b1);
+  assign wrenb_active = (WrEnB_SI === 1'b1);
 
   always_ff @(posedge Clk_CI) begin
-    if (CSelA_SI) begin
-      if (WrEnA_SI) mem[AddrA_DI] <= WrDataA_DI;
+    if (csela_active) begin
+      if (wrena_active) mem[AddrA_DI] <= WrDataA_DI;
       rdata_a_d <= mem[AddrA_DI];
     end
-    if (CSelB_SI) begin
-      if (WrEnB_SI) mem[AddrB_DI] <= WrDataB_DI;
+    if (cselb_active) begin
+      if (wrenb_active) mem[AddrB_DI] <= WrDataB_DI;
       rdata_b_d <= mem[AddrB_DI];
     end
   end
@@ -74,9 +83,12 @@ module AsyncDpRam #(
 );
 
   logic [DATA_WIDTH-1:0] mem [DATA_DEPTH-1:0] = '{default: '0};
+  logic wren_active;
+
+  assign wren_active = (WrEn_SI === 1'b1);
 
   always_ff @(posedge Clk_CI) begin
-    if (WrEn_SI) mem[WrAddr_DI] <= WrData_DI;
+    if (wren_active) mem[WrAddr_DI] <= WrData_DI;
   end
 
   assign RdData_DO = mem[RdAddr_DI];
@@ -97,9 +109,12 @@ module SyncDpRam_ind_r_w #(
 );
 
   logic [DATA_WIDTH-1:0] mem [DATA_DEPTH-1:0] = '{default: '0};
+  logic wren_active;
+
+  assign wren_active = (WrEn_SI === 1'b1);
 
   always_ff @(posedge Clk_CI) begin
-    if (WrEn_SI) mem[WrAddr_DI] <= WrData_DI;
+    if (wren_active) mem[WrAddr_DI] <= WrData_DI;
     RdData_DO <= mem[RdAddr_DI];
   end
 
@@ -121,9 +136,12 @@ module AsyncThreePortRam #(
 );
 
   logic [DATA_WIDTH-1:0] mem [DATA_DEPTH-1:0] = '{default: '0};
+  logic wren_active;
+
+  assign wren_active = (WrEn_SI === 1'b1);
 
   always_ff @(posedge Clk_CI) begin
-    if (WrEn_SI) mem[WrAddr_DI] <= WrData_DI;
+    if (wren_active) mem[WrAddr_DI] <= WrData_DI;
   end
 
   assign RdData_DO_0 = mem[RdAddr_DI_0];
@@ -147,9 +165,12 @@ module SyncThreePortRam #(
 );
 
   logic [DATA_WIDTH-1:0] mem [DATA_DEPTH-1:0] = '{default: '0};
+  logic wren_active;
+
+  assign wren_active = (WrEn_SI === 1'b1);
 
   always_ff @(posedge Clk_CI) begin
-    if (WrEn_SI) mem[WrAddr_DI] <= WrData_DI;
+    if (wren_active) mem[WrAddr_DI] <= WrData_DI;
     RdData_DO_0 <= mem[RdAddr_DI_0];
     RdData_DO_1 <= mem[RdAddr_DI_1];
   end
@@ -176,16 +197,20 @@ module SyncSpRamBeNx64 #(
   logic [63:0] rdata_d, rdata_q;
   logic [63:0] write_mask;
   logic [63:0] write_data;
+  logic csel_active;
+  logic wren_active;
 
   assign write_mask = {
     {8{BEn_SI[7]}}, {8{BEn_SI[6]}}, {8{BEn_SI[5]}}, {8{BEn_SI[4]}},
     {8{BEn_SI[3]}}, {8{BEn_SI[2]}}, {8{BEn_SI[1]}}, {8{BEn_SI[0]}}
   };
   assign write_data = (mem[Addr_DI] & ~write_mask) | (WrData_DI & write_mask);
+  assign csel_active = (CSel_SI === 1'b1);
+  assign wren_active = (WrEn_SI === 1'b1);
 
   always_ff @(posedge Clk_CI) begin
-    if (CSel_SI) begin
-      if (WrEn_SI) mem[Addr_DI] <= write_data;
+    if (csel_active) begin
+      if (wren_active) mem[Addr_DI] <= write_data;
       rdata_d <= mem[Addr_DI];
     end
   end

@@ -271,8 +271,8 @@ module bht #(
 
     // Extra buffering signals needed when synchronous RAM is used
 
-    always_ff @(posedge clk_i or negedge rst_ni) begin
-      if (CVA6Cfg.FpgaAlteraEn) begin
+    if (CVA6Cfg.FpgaAlteraEn) begin : gen_fpga_altera_buffer
+      always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
           bht_updated_valid <= '0;
           bht_update_taken <= '0;
